@@ -79,3 +79,11 @@ export function getUserPaths(): {
     userKometaConfigPath: process.env.USER_KOMETA_CONFIG_PATH,
   };
 }
+
+/**
+ * Get the HOST path for Kometa cache directory (for Docker volume mounts)
+ * This caches TMDb Discover results and other external API data between preview runs
+ */
+export function getCacheHostPath(): string | undefined {
+  return process.env.CACHE_HOST_PATH;
+}

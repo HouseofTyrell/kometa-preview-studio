@@ -10,6 +10,7 @@ export interface RunnerConfig {
   jobsHostPath: string;      // Path on Docker host (for child container mounts)
   fontsPath: string;         // Path inside backend container
   fontsHostPath: string;     // Path on Docker host (for child container mounts)
+  cacheHostPath?: string;    // Path on Docker host for persistent Kometa cache (TMDb, etc.)
   userAssetsPath?: string;
   userKometaConfigPath?: string;
 }
@@ -253,6 +254,17 @@ export class KometaRunner extends EventEmitter {
     // User Kometa config directory for Original Posters (read-only, optional)
     if (this.config.userKometaConfigPath) {
       binds.push(`${this.config.userKometaConfigPath}:/user_config:ro`);
+    }
+
+    // Persistent cache directory for TMDb/external API data (read-write)
+    // This dramatically speeds up subsequent preview runs by caching TMDb Discover results
+    // Kometa expects cache at {config_dir}/cache/, and we also mount to /kometa_cache for detection
+    if (this.config.cacheHostPath) {
+      // Mount to both locations:
+      // 1. /kometa_cache - for the entrypoint to detect cache is enabled
+      // 2. /jobs/config/cache - where Kometa actually stores the cache
+      binds.push(`${this.config.cacheHostPath}:/kometa_cache:rw`);
+      binds.push(`${this.config.cacheHostPath}:/jobs/config/cache:rw`);
     }
 
     return binds;

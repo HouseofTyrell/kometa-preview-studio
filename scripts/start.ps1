@@ -84,6 +84,7 @@ Write-Info "Ensuring required directories exist..."
 
 $fontsDir = Join-Path $RepoRoot "fonts"
 $jobsDir = Join-Path $RepoRoot "jobs"
+$cacheDir = Join-Path $RepoRoot "cache"
 
 if (-not (Test-Path $fontsDir)) {
     New-Item -ItemType Directory -Path $fontsDir -Force | Out-Null
@@ -93,6 +94,11 @@ if (-not (Test-Path $fontsDir)) {
 if (-not (Test-Path $jobsDir)) {
     New-Item -ItemType Directory -Path $jobsDir -Force | Out-Null
     Write-Info "Created directory: jobs/"
+}
+
+if (-not (Test-Path $cacheDir)) {
+    New-Item -ItemType Directory -Path $cacheDir -Force | Out-Null
+    Write-Info "Created directory: cache/ (for TMDb/external API caching)"
 }
 
 Write-Success "Required directories exist"

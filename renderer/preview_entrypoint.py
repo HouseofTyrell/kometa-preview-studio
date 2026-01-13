@@ -1579,9 +1579,14 @@ def generate_proxy_config(job_path: Path, preview_config: Dict[str, Any], proxy_
         }
 
     # Settings optimized for preview
+    # Enable cache to speed up subsequent runs (TMDb Discover data, etc.)
+    cache_enabled = Path('/kometa_cache').exists()
+    if cache_enabled:
+        logger.info("  Cache directory found - enabling Kometa cache")
+
     kometa_config['settings'] = {
-        'cache': False,
-        'cache_expiration': 0,
+        'cache': cache_enabled,
+        'cache_expiration': 1440 if cache_enabled else 0,  # 24 hours in minutes
         'asset_folders': False,
         'create_asset_folders': False,
         'prioritize_assets': False,

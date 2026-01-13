@@ -2,7 +2,7 @@ import * as fs from 'fs/promises';
 import * as path from 'path';
 import { EventEmitter } from 'events';
 import { v4 as uuidv4 } from 'uuid';
-import { getJobPaths, getJobsBasePath, getJobsHostPath, getFontsPath, getFontsHostPath, getKometaRendererImage, getUserPaths } from './paths.js';
+import { getJobPaths, getJobsBasePath, getJobsHostPath, getFontsPath, getFontsHostPath, getKometaRendererImage, getUserPaths, getCacheHostPath } from './paths.js';
 import { ensureDir, writeText, readText, pathExists, writeJson, readJson } from '../util/safeFs.js';
 import { KometaRunner, RunnerConfig, RunnerEvent } from '../kometa/runner.js';
 import { parseYaml, analyzeConfig, KometaConfig } from '../util/yaml.js';
@@ -63,6 +63,7 @@ class JobManager extends EventEmitter {
       jobsHostPath: getJobsHostPath(),
       fontsPath: getFontsPath(),
       fontsHostPath: getFontsHostPath(),
+      cacheHostPath: getCacheHostPath(),
       ...getUserPaths(),
     };
 
