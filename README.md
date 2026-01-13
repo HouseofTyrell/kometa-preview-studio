@@ -76,6 +76,42 @@ The current version previews 5 static items:
 
 > **Note**: The first build will pull the Kometa base image which may take a few minutes depending on your connection speed.
 
+#### One-click (Windows)
+
+For Windows users, we provide convenient scripts that automate the entire setup process:
+
+**Quick Start:**
+1. Double-click `scripts\start.bat` (or run `.\scripts\start.ps1` in PowerShell)
+2. Wait for the build to complete - the UI will open automatically
+
+**What the start script does:**
+- Verifies Docker Desktop is running
+- Creates `fonts/` and `jobs/` directories if missing
+- Creates `.env` with sensible defaults if missing
+- Downloads Inter font automatically if `fonts/Inter-Regular.ttf` is missing
+- Builds and starts all containers
+- Opens http://localhost:5173 in your browser
+
+**Available scripts:**
+
+| Script | Purpose |
+|--------|---------|
+| `scripts\start.bat` | Start the application (auto-setup on first run) |
+| `scripts\stop.bat` | Stop all containers |
+| `scripts\logs.bat` | View live container logs (Ctrl+C to exit) |
+| `scripts\reset.bat` | Full reset: remove volumes, rebuild without cache |
+
+**PowerShell alternative:**
+```powershell
+# From the repository root
+.\scripts\start.ps1   # Start
+.\scripts\stop.ps1    # Stop
+.\scripts\logs.ps1    # View logs
+.\scripts\reset.ps1   # Full reset
+```
+
+> **Note**: The scripts use `docker-compose` (not `docker compose`) and require Docker Desktop to be running. PowerShell 5.1+ is required (included with Windows 10/11).
+
 ### Option 2: Local Development
 
 1. **Install backend dependencies**
