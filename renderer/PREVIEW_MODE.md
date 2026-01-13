@@ -2,133 +2,90 @@
 
 ## Overview
 
-The preview renderer runs **real Kometa** inside the container with **write blocking**
-to produce pixel-identical overlay outputs without modifying Plex.
+The preview renderer runs **real Kometa** with a **local HTTP proxy** that blocks
+all write operations to Plex while allowing reads. This ensures pixel-identical
+overlay output with zero risk of modifying Plex.
 
-This is the "Path A" implementation: run Kometa normally, intercept outputs.
-
-## Key Differences from Normal Kometa Runs
-
-| Aspect | Normal Kometa Run | Preview Mode |
-|--------|-------------------|--------------|
-| Plex Connection | Read/Write | Read-only (writes blocked) |
-| Artwork Source | Plex server | Local files + Plex read |
-| Metadata Updates | Yes (labels, artwork) | No (blocked) |
-| Output Destination | Uploaded to Plex | Saved to local files |
-| Network for Plex | Full access | GET requests only |
-
-## Architecture (Path A)
+## Safety Architecture (Proxy-Based Write Blocking)
 
 ```
 ┌─────────────────────────────────────────────────────────────┐
-│                    Kometa Docker Container                   │
+│                    Renderer Container                        │
 │                                                              │
 │  ┌──────────────────────────────────────────────────────┐   │
 │  │              preview_entrypoint.py                    │   │
 │  │                                                       │   │
-│  │  1. Install PlexWriteBlocker (monkeypatch requests)  │   │
-│  │     - Block PUT/POST/DELETE/PATCH to Plex URL        │   │
+│  │  1. Start PlexProxy on 127.0.0.1:32500               │   │
+│  │     - Forward GET/HEAD to real Plex                  │   │
+│  │     - Block PUT/POST/PATCH/DELETE → return 200       │   │
 │  │     - Log all blocked attempts                        │   │
 │  │                                                       │   │
-│  │  2. Install OverlayOutputCapture                     │   │
-│  │     - Patch upload_poster() to copy files instead    │   │
-│  │     - Save outputs to /jobs/<id>/output/              │   │
+│  │  2. Generate kometa_run.yml                          │   │
+│  │     - plex.url = http://127.0.0.1:32500 (proxy)      │   │
+│  │     - plex.token = real token                        │   │
 │  │                                                       │   │
-│  │  3. Run real Kometa via subprocess                   │   │
-│  │     - Uses generated kometa_config.yml               │   │
-│  │     - Streams stdout/stderr for SSE logging          │   │
+│  │  3. Run Kometa subprocess                            │   │
+│  │     - Kometa connects to proxy, not real Plex        │   │
+│  │     - All writes blocked at network layer            │   │
 │  │                                                       │   │
-│  │  4. Write summary.json with results                  │   │
+│  │  4. Export rendered images to output/                │   │
 │  └──────────────────────────────────────────────────────┘   │
-│                                                              │
+│                              │                               │
+│                              ▼                               │
 │  ┌──────────────────────────────────────────────────────┐   │
-│  │              Kometa (real execution)                  │   │
+│  │              PlexProxy (127.0.0.1:32500)              │   │
 │  │                                                       │   │
-│  │  - Connects to Plex (GET requests allowed)           │   │
-│  │  - Reads library metadata                            │   │
-│  │  - Applies overlays using real overlay pipeline      │   │
-│  │  - Attempts to upload (captured by our patches)      │   │
+│  │   GET /library/...  ──────────────►  Real Plex       │   │
+│  │   HEAD /...         ──────────────►  Real Plex       │   │
+│  │                                                       │   │
+│  │   PUT /...          ──► BLOCKED (return 200)         │   │
+│  │   POST /...         ──► BLOCKED (return 200)         │   │
+│  │   PATCH /...        ──► BLOCKED (return 200)         │   │
+│  │   DELETE /...       ──► BLOCKED (return 200)         │   │
 │  └──────────────────────────────────────────────────────┘   │
 │                                                              │
 └─────────────────────────────────────────────────────────────┘
+                              │
+                              ▼
+                    ┌─────────────────┐
+                    │   Real Plex     │
+                    │   (read-only)   │
+                    └─────────────────┘
 ```
 
-## Write Blocking Mechanism
+## Why Proxy Instead of Monkeypatching?
 
-### PlexWriteBlocker
+Previous implementation used Python monkeypatching (`requests.Session.request`),
+which **does not work across process boundaries**. When Kometa runs as a subprocess,
+it has its own Python interpreter with unpatched imports.
 
-Monkeypatches `requests.Session.request` to intercept all HTTP requests:
+The proxy approach is **process-boundary safe**:
+- Proxy runs in the main process
+- Kometa subprocess connects to proxy URL
+- All HTTP traffic is intercepted at the network layer
+- Works regardless of how Kometa makes HTTP requests
 
-```python
-# Pseudocode
-def blocked_request(session, method, url, **kwargs):
-    if url.startswith(plex_url) and method != 'GET':
-        log(f"BLOCKED: {method} {url}")
-        return fake_200_response()
-    return original_request(session, method, url, **kwargs)
+## Request Flow
+
+### Allowed (GET/HEAD)
+```
+Kometa → Proxy:32500 → Real Plex:32400 → Response → Kometa
 ```
 
-**Blocked methods:**
-- `PUT` - artwork uploads
-- `POST` - metadata updates
-- `DELETE` - item removal
-- `PATCH` - partial updates
-
-**Allowed:**
-- `GET` - Kometa needs to read library/item metadata
-
-### OverlayOutputCapture
-
-Patches Kometa's upload methods to capture outputs:
-
-```python
-# Pseudocode
-def patched_upload_poster(library, item, image_path, url=False):
-    if image_path and os.path.exists(image_path):
-        # Copy to our output directory instead of uploading
-        output_path = output_dir / f"{item_id}_after.png"
-        shutil.copy2(image_path, output_path)
-        log(f"CAPTURED: {item.title} -> {output_path}")
-    # Don't actually upload
-    return None
+### Blocked (PUT/POST/PATCH/DELETE)
+```
+Kometa → Proxy:32500 → BLOCKED → 200 OK {} → Kometa
+                     └─► Logged to blocked_requests[]
 ```
 
-## File Structure
+## Configuration
 
-```
-/jobs/<jobId>/
-├── input/                    # Base artwork images (from backend)
-│   ├── matrix.jpg
-│   ├── dune.jpg
-│   ├── breakingbad_series.jpg
-│   ├── breakingbad_s01.jpg
-│   └── breakingbad_s01e01.jpg
-│
-├── config/
-│   ├── preview.yml          # Generated preview config
-│   └── kometa_config.yml    # Generated Kometa config
-│
-├── output/                   # Captured overlay outputs
-│   ├── matrix_after.png
-│   ├── dune_after.png
-│   ├── breakingbad_series_after.png
-│   ├── breakingbad_s01_after.png
-│   ├── breakingbad_s01e01_after.png
-│   └── summary.json
-│
-├── logs/                     # Container logs
-│
-└── meta.json                 # Item metadata
-```
-
-## Config Generation
-
-The backend generates a **valid Kometa config** (not a custom format):
+### Generated Kometa Config (`kometa_run.yml`)
 
 ```yaml
 plex:
-  url: "http://your-plex:32400"
-  token: "your-token"
+  url: "http://127.0.0.1:32500"  # Proxy URL, not real Plex!
+  token: "actual-plex-token"
   timeout: 60
   clean_bundles: false
   empty_trash: false
@@ -136,122 +93,85 @@ plex:
 
 settings:
   cache: false
-  run_order: ['overlays']  # Only run overlays
-  # ... other settings disabled
+  run_order: ['overlays']
+  # ... other settings
 
 libraries:
   Movies:
     overlay_files:
       - pmm: resolution
-      - pmm: audio_codec
-    operations: null      # Disabled
-    collections: null     # Disabled
-    metadata: null        # Disabled
-
-preview:
-  mode: 'write_blocked'
-  targets:
-    - id: matrix
-      type: movie
-      title: "The Matrix"
-    # ... other targets
 ```
 
-## Kometa Execution
+## Output Export
 
-The renderer runs Kometa as a subprocess:
+After Kometa runs, the renderer locates and exports overlay outputs:
 
-```bash
-python /kometa.py -r --config /jobs/<id>/config/kometa_config.yml
+1. Check `{config_dir}/overlays/` for rendered images
+2. Look for `temp.png`, `temp.jpg`, `temp.webp` files
+3. Copy to `/jobs/<id>/output/<target>_after.png`
+
+### Output Files
+
 ```
-
-Flags:
-- `-r` or `--run`: Run once (not scheduled mode)
-- `--config`: Path to config file
-
-Output is streamed to stdout for SSE logging.
-
-## Fallback Rendering
-
-If Kometa execution fails (e.g., can't find kometa.py), the renderer
-falls back to basic PIL overlay application:
-
-1. Load input image
-2. Apply type-appropriate badge (resolution, rating, season, episode)
-3. Save to output directory
-
-This ensures previews are always generated, even if degraded.
+/jobs/<jobId>/output/
+├── matrix_after.png
+├── dune_after.png
+├── breakingbad_series_after.png
+├── breakingbad_s01_after.png
+├── breakingbad_s01e01_after.png
+└── summary.json
+```
 
 ## Summary Output
 
-`/jobs/<id>/output/summary.json`:
+`summary.json` contains:
 
 ```json
 {
   "timestamp": "2024-01-15T10:30:00Z",
   "success": true,
   "kometa_exit_code": 0,
-  "kometa_ran": true,
   "blocked_write_attempts": [
     {
       "method": "PUT",
-      "url": "http://plex:32400/library/metadata/12345/posters",
+      "path": "/library/metadata/12345/posters",
       "timestamp": "2024-01-15T10:30:15Z"
     }
   ],
-  "captured_outputs": [
-    {
-      "ratingKey": "12345",
-      "title": "The Matrix",
-      "source": "/config/overlays/temp.png",
-      "destination": "/jobs/.../output/matrix_after.png",
-      "timestamp": "2024-01-15T10:30:15Z"
-    }
-  ],
-  "output_files": [
-    "matrix_after.png",
-    "dune_after.png",
-    "breakingbad_series_after.png",
-    "breakingbad_s01_after.png",
-    "breakingbad_s01e01_after.png"
-  ]
+  "exported_files": {
+    "matrix": "/jobs/.../output/matrix_after.png"
+  },
+  "output_files": ["matrix_after.png", "dune_after.png", ...]
 }
 ```
 
 ## Safety Guarantees
 
-1. **No Plex Writes**: All non-GET requests to Plex are blocked at the HTTP layer
-2. **Logged Attempts**: Every blocked write is logged for verification
-3. **Network Isolation**: Container runs with `NetworkMode: 'none'` for extra safety
-4. **Read-Only Mounts**: User assets and config are mounted read-only
-5. **Local Output Only**: Results saved to local filesystem, never uploaded
+1. **Network-layer blocking**: All Plex writes blocked at HTTP proxy level
+2. **Process-boundary safe**: Works with subprocess execution
+3. **Logged attempts**: Every blocked write recorded in summary.json
+4. **No fallback rendering**: If Kometa fails, job fails (no PIL fallback)
 
-## Pixel Identity
+## Verification
 
-Because we run Kometa's actual overlay pipeline:
-- Same overlay parsing and template resolution
-- Same font loading and text rendering
-- Same image composition and positioning
-- Same color handling and alpha blending
+To verify no writes occurred:
 
-The only difference is the final "upload to Plex" step is replaced with
-"copy to output directory".
+1. Check `summary.json` → `blocked_write_attempts`
+2. Look for `BLOCKED_WRITE:` lines in logs
+3. Compare Plex artwork before/after preview
 
-## Debugging
+## Limitations
 
-Check the summary.json for:
-- `kometa_ran`: Did Kometa execute?
-- `kometa_exit_code`: Did it succeed?
-- `blocked_write_attempts`: What writes were blocked?
-- `captured_outputs`: What files were captured?
-- `output_files`: What outputs were generated?
+1. **Full library processing**: Kometa processes entire library, not just 5 items
+2. **Single temp file**: Output export assumes one overlay at a time
+3. **No item tracking**: Cannot map which overlay went to which item
 
-Enable verbose logging:
-```bash
-PYTHONUNBUFFERED=1 python3 preview_entrypoint.py --job /jobs/<id>
-```
+## No Fallback Rendering
 
-## Deprecated Files
+This implementation does **NOT** include PIL/manual rendering fallback.
+If Kometa fails to produce output, the preview job fails with an error.
 
-The following files are deprecated and not used in Path A:
-- `renderer/kometa_bridge.py` - Was for custom overlay rendering, now bypassed
+This ensures:
+- Output is always pixel-identical to real Kometa
+- No custom rendering that might differ from Kometa
+- Clear failure mode when something goes wrong
