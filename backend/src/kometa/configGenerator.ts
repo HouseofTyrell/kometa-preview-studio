@@ -139,12 +139,14 @@ function buildKometaConfig(
   }
 
   // Add preview metadata section (used by the renderer)
+  // IMPORTANT: ratingKey is required for deterministic output mapping
   config.preview = {
     mode: 'write_blocked',
     targets: targets.map((t) => ({
       id: t.id,
       type: t.type,
       title: t.actualTitle,
+      ratingKey: t.ratingKey,  // Required for mapping captured uploads to targets
       input: targetMapping[t.id]?.inputPath,
       output: targetMapping[t.id]?.outputPath,
     })),
