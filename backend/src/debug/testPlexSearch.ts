@@ -193,12 +193,16 @@ async function main() {
   console.log('='.repeat(60));
   console.log('TEST 3: Library Sections');
   console.log('='.repeat(60));
+
+  interface Section { key: string; title: string; type: string }
+  let sections: Section[] = [];
+
   try {
     const response = await fetch(`${PLEX_URL}/library/sections?X-Plex-Token=${PLEX_TOKEN}`, {
       headers: { 'Accept': 'application/json' },
     });
-    const data = await response.json() as { MediaContainer?: { Directory?: Array<{ key: string; title: string; type: string }> } };
-    const sections = data.MediaContainer?.Directory || [];
+    const data = await response.json() as { MediaContainer?: { Directory?: Section[] } };
+    sections = data.MediaContainer?.Directory || [];
 
     console.log(`Found ${sections.length} library section(s):`);
     for (const section of sections) {
@@ -206,6 +210,60 @@ async function main() {
     }
   } catch (err) {
     console.error('Error fetching library sections:', err instanceof Error ? err.message : err);
+  }
+  console.log();
+
+  // Test 4: List items directly from sections (bypasses search)
+  console.log('='.repeat(60));
+  console.log('TEST 4: Direct Library Listing (first 10 items per section)');
+  console.log('='.repeat(60));
+
+  for (const section of sections) {
+    console.log(`\n--- Section: ${section.title} (${section.type}) ---`);
+    try {
+      const response = await fetch(
+        `${PLEX_URL}/library/sections/${section.key}/all?X-Plex-Token=${PLEX_TOKEN}`,
+        { headers: { 'Accept': 'application/json' } }
+      );
+      const data = await response.json() as {
+        MediaContainer?: {
+          size?: number;
+          totalSize?: number;
+          Metadata?: Array<{ ratingKey: string; title: string; year?: number; type: string }>
+        }
+      };
+
+      const totalSize = data.MediaContainer?.totalSize || data.MediaContainer?.size || 0;
+      const items = data.MediaContainer?.Metadata || [];
+
+      console.log(`    Total items: ${totalSize}`);
+      console.log(`    First 10 items:`);
+
+      for (const item of items.slice(0, 10)) {
+        const yearStr = item.year ? ` (${item.year})` : '';
+        console.log(`      - "${item.title}"${yearStr} [ratingKey: ${item.ratingKey}]`);
+      }
+
+      // Check if our targets exist
+      const targetTitles = ['The Matrix', 'Dune', 'Breaking Bad'];
+      console.log(`\n    Searching for preview targets in this section:`);
+      for (const targetTitle of targetTitles) {
+        const found = items.find(i => i.title.toLowerCase() === targetTitle.toLowerCase());
+        if (found) {
+          console.log(`      ✓ Found "${found.title}" [ratingKey: ${found.ratingKey}]`);
+        } else {
+          // Partial match
+          const partial = items.find(i => i.title.toLowerCase().includes(targetTitle.toLowerCase()));
+          if (partial) {
+            console.log(`      ~ Partial match: "${partial.title}" [ratingKey: ${partial.ratingKey}]`);
+          } else {
+            console.log(`      ✗ "${targetTitle}" not found in first ${items.length} items`);
+          }
+        }
+      }
+    } catch (err) {
+      console.error(`    Error listing section: ${err instanceof Error ? err.message : err}`);
+    }
   }
   console.log();
 
