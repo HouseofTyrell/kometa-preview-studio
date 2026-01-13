@@ -6,8 +6,10 @@ import { ensureDir, writeText } from '../util/safeFs.js';
 
 export interface RunnerConfig {
   kometaImage: string;
-  jobsBasePath: string;
-  fontsPath: string;
+  jobsBasePath: string;      // Path inside backend container
+  jobsHostPath: string;      // Path on Docker host (for child container mounts)
+  fontsPath: string;         // Path inside backend container
+  fontsHostPath: string;     // Path on Docker host (for child container mounts)
   userAssetsPath?: string;
   userKometaConfigPath?: string;
 }
@@ -85,8 +87,8 @@ export class KometaRunner extends EventEmitter {
         message: 'Using Kometa-based renderer for pixel-identical overlays',
       });
 
-      // Build volume mounts
-      const binds = this.buildVolumeMounts(jobPath);
+      // Build volume mounts using host paths for Docker daemon
+      const binds = this.buildVolumeMounts(jobId);
 
       this.emitEvent(jobId, {
         type: 'log',
@@ -230,16 +232,20 @@ export class KometaRunner extends EventEmitter {
   /**
    * Build volume mount strings
    */
-  private buildVolumeMounts(jobPath: string): string[] {
+  private buildVolumeMounts(jobId: string): string[] {
     const binds: string[] = [];
 
     // Job directory (read-write)
-    binds.push(`${jobPath}:/jobs:rw`);
+    // Use HOST path for Docker bind mount - the Docker daemon runs on the host,
+    // not inside this container, so it needs the host filesystem path
+    const jobHostPath = path.join(this.config.jobsHostPath, jobId);
+    binds.push(`${jobHostPath}:/jobs:rw`);
 
-    // Fonts directory (read-only)
-    binds.push(`${this.config.fontsPath}:/fonts:ro`);
+    // Fonts directory (read-only) - use host path
+    binds.push(`${this.config.fontsHostPath}:/fonts:ro`);
 
     // User assets directory (read-only, optional)
+    // These are already host paths since they're configured by the user
     if (this.config.userAssetsPath) {
       binds.push(`${this.config.userAssetsPath}:/user_assets:ro`);
     }
