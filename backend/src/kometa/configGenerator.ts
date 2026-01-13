@@ -77,6 +77,11 @@ function buildKometaConfig(
     };
   }
 
+  // Copy TMDb section - required for many overlay operations (ratings, etc.)
+  if ((originalConfig as Record<string, unknown>).tmdb) {
+    config.tmdb = (originalConfig as Record<string, unknown>).tmdb;
+  }
+
   // Settings optimized for preview mode
   config.settings = {
     cache: false,
