@@ -1,5 +1,3 @@
-version: '3.8'
-
 services:
   backend:
     build:
@@ -46,10 +44,9 @@ services:
       args:
         - KOMETA_IMAGE_TAG=${KOMETA_IMAGE_TAG:-v2.0.2}
     image: kometa-preview-renderer:latest
-    # This service only builds the image, it doesn't stay running
+    # This service only builds the image, then exits immediately
     command: ["echo", "Renderer image built successfully"]
-    profiles:
-      - build
+    restart: "no"
     networks:
       - kometa-preview
 
