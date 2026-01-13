@@ -189,6 +189,36 @@ The preview renderer is based on the official Kometa Docker image (`kometateam/k
 
 4. **Future compatibility**: As Kometa's overlay system evolves, updates to the pinned version will automatically incorporate improvements.
 
+### Preview Renderer Architecture
+
+The preview renderer (`renderer/preview_entrypoint.py`) uses Kometa's internal overlay pipeline to render overlays on local images:
+
+```
+┌──────────────────────────────────────────────────────────────┐
+│                     preview_entrypoint.py                     │
+├──────────────────────────────────────────────────────────────┤
+│  1. Load preview.yml (overlay definitions from user config)   │
+│  2. Load meta.json (item metadata: type, resolution, etc.)   │
+│  3. For each input image:                                     │
+│     - Create MockItem simulating Plex item                   │
+│     - Parse overlay YAML using Kometa semantics              │
+│     - Apply overlays using Kometa-compatible rendering       │
+│     - Save to /jobs/<id>/output/<item>_after.png             │
+│  4. Write summary.json with results                          │
+└──────────────────────────────────────────────────────────────┘
+```
+
+**Key differences from normal Kometa:**
+
+| Feature | Normal Kometa | Preview Mode |
+|---------|--------------|--------------|
+| Plex connection | Required | Not used |
+| Artwork source | Plex server | Local files |
+| Metadata updates | Yes (labels, posters) | No |
+| Network access | Required | Disabled |
+
+For more technical details, see [renderer/PREVIEW_MODE.md](renderer/PREVIEW_MODE.md).
+
 ## API Endpoints
 
 | Endpoint | Method | Description |
