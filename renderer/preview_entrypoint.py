@@ -65,21 +65,29 @@ PLEX_UPLOAD_PATTERN = re.compile(
 
 # Library listing endpoint patterns (endpoints that return lists of items)
 # These are filtered to only include allowed ratingKeys
+# Note: Using simpler patterns that match the path prefix, query string handled separately
 LIBRARY_LISTING_PATTERNS = [
-    re.compile(r'^/library/sections/(\d+)/all(?:\?.*)?$'),       # All items in section
-    re.compile(r'^/library/sections/(\d+)/search(?:\?.*)?$'),    # Search in section
-    re.compile(r'^/library/search(?:\?.*)?$'),                    # Global library search
-    re.compile(r'^/hubs/search(?:\?.*)?$'),                       # Hub search
-    re.compile(r'^/library/sections/(\d+)/firstCharacter(?:\?.*)?$'),  # First character browse
-    re.compile(r'^/library/sections/(\d+)/genre(?:\?.*)?$'),      # Genre browse
-    re.compile(r'^/library/sections/(\d+)/year(?:\?.*)?$'),       # Year browse
-    re.compile(r'^/library/sections/(\d+)/decade(?:\?.*)?$'),     # Decade browse
-    re.compile(r'^/library/sections/(\d+)/rating(?:\?.*)?$'),     # Rating browse
-    re.compile(r'^/library/sections/(\d+)/collection(?:\?.*)?$'), # Collection browse
-    re.compile(r'^/library/sections/(\d+)/recentlyAdded(?:\?.*)?$'),  # Recently added
-    re.compile(r'^/library/sections/(\d+)/newest(?:\?.*)?$'),     # Newest items
-    re.compile(r'^/library/sections/(\d+)/onDeck(?:\?.*)?$'),     # On deck
-    re.compile(r'^/library/sections/(\d+)/unwatched(?:\?.*)?$'),  # Unwatched
+    # Primary listing endpoints (most important for Kometa)
+    re.compile(r'^/library/sections/\d+/all\b'),           # All items in section
+    re.compile(r'^/library/sections/\d+/search\b'),        # Search in section
+    re.compile(r'^/library/search\b'),                      # Global library search
+    re.compile(r'^/hubs/search\b'),                         # Hub search
+    # Browse/filter endpoints
+    re.compile(r'^/library/sections/\d+/firstCharacter\b'),
+    re.compile(r'^/library/sections/\d+/genre\b'),
+    re.compile(r'^/library/sections/\d+/year\b'),
+    re.compile(r'^/library/sections/\d+/decade\b'),
+    re.compile(r'^/library/sections/\d+/rating\b'),
+    re.compile(r'^/library/sections/\d+/collection\b'),
+    re.compile(r'^/library/sections/\d+/recentlyAdded\b'),
+    re.compile(r'^/library/sections/\d+/newest\b'),
+    re.compile(r'^/library/sections/\d+/onDeck\b'),
+    re.compile(r'^/library/sections/\d+/unwatched\b'),
+    # Additional endpoints Kometa might use
+    re.compile(r'^/library/sections/\d+/folder\b'),        # Folder browse
+    re.compile(r'^/library/sections/\d+/filters\b'),       # Filter results
+    re.compile(r'^/library/all\b'),                         # All library items
+    re.compile(r'^/library/recentlyAdded\b'),              # Global recently added
 ]
 
 # Metadata endpoint pattern - to block access to non-allowed items
@@ -190,9 +198,12 @@ def is_listing_endpoint(path: str) -> bool:
     Returns:
         True if this endpoint returns a list of items that should be filtered
     """
+    # Strip query string for cleaner matching
+    path_base = path.split('?')[0]
+
     # Check against all listing patterns
     for pattern in LIBRARY_LISTING_PATTERNS:
-        if pattern.match(path):
+        if pattern.search(path_base):
             return True
     return False
 
@@ -294,6 +305,11 @@ class PlexProxyHandler(BaseHTTPRequestHandler):
 
     def do_GET(self):
         """Forward GET requests to real Plex"""
+        # Log ALL GET requests for debugging
+        path_base = self.path.split('?')[0]
+        is_listing = is_listing_endpoint(self.path)
+        is_meta = is_metadata_endpoint(self.path)
+        logger.info(f"PROXY_GET path={path_base} is_listing={is_listing} is_metadata={is_meta}")
         self._forward_request('GET')
 
     def do_HEAD(self):
@@ -383,15 +399,35 @@ class PlexProxyHandler(BaseHTTPRequestHandler):
                 # Only filter XML responses
                 if 'xml' in content_type.lower() or response_body.strip().startswith(b'<'):
                     original_size = len(response_body)
+
+                    # Count items before filtering for accurate logging
+                    try:
+                        import xml.etree.ElementTree as ET
+                        root = ET.fromstring(response_body)
+                        original_item_count = sum(
+                            1 for child in root if child.get('ratingKey') is not None
+                        )
+                    except Exception:
+                        original_item_count = -1
+
                     filtered_body = filter_media_container_xml(
                         response_body, self.allowed_rating_keys
                     )
 
-                    # Log the filtering
+                    # Count items after filtering
+                    try:
+                        filtered_root = ET.fromstring(filtered_body)
+                        filtered_item_count = sum(
+                            1 for child in filtered_root if child.get('ratingKey') is not None
+                        )
+                    except Exception:
+                        filtered_item_count = -1
+
+                    # Log the filtering with item counts
                     logger.info(
                         f"FILTER_LIST endpoint={path.split('?')[0]} "
-                        f"original_bytes={original_size} filtered_bytes={len(filtered_body)} "
-                        f"allowed={len(self.allowed_rating_keys)}"
+                        f"items_before={original_item_count} items_after={filtered_item_count} "
+                        f"allowed_keys={len(self.allowed_rating_keys)}"
                     )
 
                     # Track filtered request
@@ -401,10 +437,22 @@ class PlexProxyHandler(BaseHTTPRequestHandler):
                             'method': method,
                             'original_bytes': original_size,
                             'filtered_bytes': len(filtered_body),
+                            'original_items': original_item_count,
+                            'filtered_items': filtered_item_count,
                             'timestamp': datetime.now().isoformat()
                         })
 
                     response_body = filtered_body
+                else:
+                    logger.warning(
+                        f"FILTER_SKIP_NON_XML endpoint={path.split('?')[0]} "
+                        f"content_type={content_type}"
+                    )
+            elif should_filter_listing:
+                logger.warning(
+                    f"FILTER_SKIP_STATUS endpoint={path.split('?')[0]} "
+                    f"status={response.status}"
+                )
 
             # Send response
             self.send_response(response.status)
