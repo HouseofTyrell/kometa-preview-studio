@@ -550,11 +550,13 @@ def generate_proxy_config(job_path: Path, preview_config: Dict[str, Any], proxy_
     """
     Generate a Kometa config that points to the proxy instead of real Plex.
     """
+    # Determine which YAML library to use
+    use_pyyaml = False
     try:
-        import yaml
+        import yaml as pyyaml
+        use_pyyaml = True
     except ImportError:
-        from ruamel.yaml import YAML
-        yaml = YAML()
+        pass
 
     config_dir = job_path / 'config'
     kometa_config_path = config_dir / 'kometa_run.yml'
@@ -605,10 +607,14 @@ def generate_proxy_config(job_path: Path, preview_config: Dict[str, Any], proxy_
             kometa_config['libraries'] = libraries
 
     with open(kometa_config_path, 'w') as f:
-        if hasattr(yaml, 'dump'):
-            yaml.dump(kometa_config, f, default_flow_style=False)
+        if use_pyyaml:
+            pyyaml.dump(kometa_config, f, default_flow_style=False)
         else:
-            yaml.dump(kometa_config, f)
+            # Use ruamel.yaml (available in Kometa image)
+            from ruamel.yaml import YAML
+            ruamel_yaml = YAML()
+            ruamel_yaml.default_flow_style = False
+            ruamel_yaml.dump(kometa_config, f)
 
     logger.info(f"Generated Kometa config: {kometa_config_path}")
     logger.info(f"  Plex URL set to proxy: {proxy_url}")
