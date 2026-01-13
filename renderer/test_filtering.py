@@ -2,7 +2,8 @@
 """
 Unit tests for the Plex filtering proxy helper functions.
 
-These tests verify the XML filtering logic without requiring a real Plex server.
+These tests verify the XML filtering logic and mock library mode
+without requiring a real Plex server.
 
 Run with:
     python3 -m pytest test_filtering.py -v
@@ -21,6 +22,15 @@ from preview_entrypoint import (
     extract_rating_key_from_path,
     is_metadata_endpoint,
     extract_allowed_rating_keys,
+    extract_preview_targets,
+    # Mock library mode functions
+    build_synthetic_library_sections_xml,
+    build_synthetic_listing_xml,
+    build_synthetic_children_xml,
+    is_library_sections_endpoint,
+    is_children_endpoint,
+    extract_section_id,
+    extract_search_query,
 )
 
 
@@ -365,6 +375,465 @@ class TestIntegration(unittest.TestCase):
 
         titles = {v.get('title') for v in videos}
         self.assertEqual(titles, {'The Matrix', 'Dune'})
+
+
+# ============================================================================
+# Mock Library Mode Tests
+# ============================================================================
+
+class TestBuildSyntheticLibrarySectionsXml(unittest.TestCase):
+    """Tests for build_synthetic_library_sections_xml function"""
+
+    def test_creates_movie_section_for_movies(self):
+        """Should create Movies section when targets include movies"""
+        targets = [
+            {'id': 'matrix', 'type': 'movie', 'ratingKey': '100', 'title': 'Matrix'},
+        ]
+        result = build_synthetic_library_sections_xml(targets)
+        root = ET.fromstring(result)
+
+        self.assertEqual(root.tag, 'MediaContainer')
+        self.assertEqual(root.get('size'), '1')
+
+        dirs = root.findall('Directory')
+        self.assertEqual(len(dirs), 1)
+        self.assertEqual(dirs[0].get('type'), 'movie')
+        self.assertEqual(dirs[0].get('title'), 'Movies')
+
+    def test_creates_show_section_for_shows(self):
+        """Should create TV Shows section when targets include shows"""
+        targets = [
+            {'id': 'bb', 'type': 'show', 'ratingKey': '200', 'title': 'Breaking Bad'},
+        ]
+        result = build_synthetic_library_sections_xml(targets)
+        root = ET.fromstring(result)
+
+        dirs = root.findall('Directory')
+        self.assertEqual(len(dirs), 1)
+        self.assertEqual(dirs[0].get('type'), 'show')
+        self.assertEqual(dirs[0].get('title'), 'TV Shows')
+
+    def test_creates_both_sections_for_mixed(self):
+        """Should create both sections when targets include movies and shows"""
+        targets = [
+            {'id': 'matrix', 'type': 'movie', 'ratingKey': '100'},
+            {'id': 'bb', 'type': 'show', 'ratingKey': '200'},
+        ]
+        result = build_synthetic_library_sections_xml(targets)
+        root = ET.fromstring(result)
+
+        self.assertEqual(root.get('size'), '2')
+        dirs = root.findall('Directory')
+        self.assertEqual(len(dirs), 2)
+
+        types = {d.get('type') for d in dirs}
+        self.assertEqual(types, {'movie', 'show'})
+
+    def test_creates_show_section_for_episodes(self):
+        """Should create TV Shows section for episode targets"""
+        targets = [
+            {'id': 'ep', 'type': 'episode', 'ratingKey': '300'},
+        ]
+        result = build_synthetic_library_sections_xml(targets)
+        root = ET.fromstring(result)
+
+        dirs = root.findall('Directory')
+        self.assertEqual(len(dirs), 1)
+        self.assertEqual(dirs[0].get('type'), 'show')
+
+    def test_fallback_when_no_types(self):
+        """Should create both sections when types not specified"""
+        targets = [
+            {'id': 'item', 'ratingKey': '100'},  # no type
+        ]
+        result = build_synthetic_library_sections_xml(targets)
+        root = ET.fromstring(result)
+
+        # Falls back to both sections
+        self.assertEqual(root.get('size'), '2')
+
+
+class TestBuildSyntheticListingXml(unittest.TestCase):
+    """Tests for build_synthetic_listing_xml function"""
+
+    def test_returns_only_allowlist_items(self):
+        """Should return only items in targets"""
+        targets = [
+            {'id': 'matrix', 'type': 'movie', 'ratingKey': '100', 'title': 'Matrix'},
+            {'id': 'dune', 'type': 'movie', 'ratingKey': '200', 'title': 'Dune'},
+        ]
+        result = build_synthetic_listing_xml(targets)
+        root = ET.fromstring(result)
+
+        self.assertEqual(root.get('size'), '2')
+        videos = root.findall('Video')
+        self.assertEqual(len(videos), 2)
+
+        keys = {v.get('ratingKey') for v in videos}
+        self.assertEqual(keys, {'100', '200'})
+
+    def test_creates_video_for_movies(self):
+        """Should create Video element for movie targets"""
+        targets = [
+            {'id': 'matrix', 'type': 'movie', 'ratingKey': '100', 'title': 'Matrix', 'year': '1999'},
+        ]
+        result = build_synthetic_listing_xml(targets)
+        root = ET.fromstring(result)
+
+        videos = root.findall('Video')
+        self.assertEqual(len(videos), 1)
+        self.assertEqual(videos[0].get('type'), 'movie')
+        self.assertEqual(videos[0].get('title'), 'Matrix')
+        self.assertEqual(videos[0].get('year'), '1999')
+
+    def test_creates_directory_for_shows(self):
+        """Should create Directory element for show targets"""
+        targets = [
+            {'id': 'bb', 'type': 'show', 'ratingKey': '200', 'title': 'Breaking Bad'},
+        ]
+        result = build_synthetic_listing_xml(targets)
+        root = ET.fromstring(result)
+
+        dirs = root.findall('Directory')
+        self.assertEqual(len(dirs), 1)
+        self.assertEqual(dirs[0].get('type'), 'show')
+        self.assertEqual(dirs[0].get('title'), 'Breaking Bad')
+
+    def test_creates_episode_with_parent_keys(self):
+        """Should create Video with parentRatingKey for episodes"""
+        targets = [
+            {
+                'id': 'ep1',
+                'type': 'episode',
+                'ratingKey': '300',
+                'title': 'Pilot',
+                'parentRatingKey': '200',
+                'grandparentRatingKey': '100',
+                'index': 1,
+                'parentIndex': 1,
+            },
+        ]
+        result = build_synthetic_listing_xml(targets)
+        root = ET.fromstring(result)
+
+        videos = root.findall('Video')
+        self.assertEqual(len(videos), 1)
+        self.assertEqual(videos[0].get('type'), 'episode')
+        self.assertEqual(videos[0].get('parentRatingKey'), '200')
+        self.assertEqual(videos[0].get('grandparentRatingKey'), '100')
+
+    def test_creates_season_with_parent_key(self):
+        """Should create Directory with parentRatingKey for seasons"""
+        targets = [
+            {
+                'id': 's1',
+                'type': 'season',
+                'ratingKey': '200',
+                'title': 'Season 1',
+                'parentRatingKey': '100',
+                'index': 1,
+            },
+        ]
+        result = build_synthetic_listing_xml(targets)
+        root = ET.fromstring(result)
+
+        dirs = root.findall('Directory')
+        self.assertEqual(len(dirs), 1)
+        self.assertEqual(dirs[0].get('type'), 'season')
+        self.assertEqual(dirs[0].get('parentRatingKey'), '100')
+
+    def test_search_filter(self):
+        """Should filter items by search query"""
+        targets = [
+            {'id': 'matrix', 'type': 'movie', 'ratingKey': '100', 'title': 'The Matrix'},
+            {'id': 'dune', 'type': 'movie', 'ratingKey': '200', 'title': 'Dune'},
+        ]
+        result = build_synthetic_listing_xml(targets, query='Matrix')
+        root = ET.fromstring(result)
+
+        self.assertEqual(root.get('size'), '1')
+        videos = root.findall('Video')
+        self.assertEqual(len(videos), 1)
+        self.assertEqual(videos[0].get('title'), 'The Matrix')
+
+    def test_case_insensitive_search(self):
+        """Search should be case-insensitive"""
+        targets = [
+            {'id': 'matrix', 'type': 'movie', 'ratingKey': '100', 'title': 'The Matrix'},
+        ]
+        result = build_synthetic_listing_xml(targets, query='matrix')
+        root = ET.fromstring(result)
+        self.assertEqual(root.get('size'), '1')
+
+    def test_empty_result_when_no_match(self):
+        """Should return empty when no items match query"""
+        targets = [
+            {'id': 'matrix', 'type': 'movie', 'ratingKey': '100', 'title': 'Matrix'},
+        ]
+        result = build_synthetic_listing_xml(targets, query='Inception')
+        root = ET.fromstring(result)
+
+        self.assertEqual(root.get('size'), '0')
+        self.assertEqual(len(list(root)), 0)
+
+    def test_skips_targets_without_rating_key(self):
+        """Should skip targets without ratingKey"""
+        targets = [
+            {'id': 'matrix', 'type': 'movie', 'ratingKey': '100', 'title': 'Matrix'},
+            {'id': 'missing', 'type': 'movie', 'title': 'No Key'},  # no ratingKey
+        ]
+        result = build_synthetic_listing_xml(targets)
+        root = ET.fromstring(result)
+
+        self.assertEqual(root.get('size'), '1')
+
+    def test_uses_metadata_cache_for_parent_keys(self):
+        """Should use metadata cache for missing parent keys"""
+        targets = [
+            {'id': 'ep', 'type': 'episode', 'ratingKey': '300', 'title': 'Pilot'},
+        ]
+        metadata_cache = {
+            '300': {
+                'ratingKey': '300',
+                'parentRatingKey': '200',
+                'grandparentRatingKey': '100',
+            }
+        }
+        result = build_synthetic_listing_xml(targets, metadata_cache=metadata_cache)
+        root = ET.fromstring(result)
+
+        videos = root.findall('Video')
+        self.assertEqual(videos[0].get('parentRatingKey'), '200')
+        self.assertEqual(videos[0].get('grandparentRatingKey'), '100')
+
+    def test_correct_size_attribute(self):
+        """Size attribute should match actual item count"""
+        targets = [
+            {'id': 'a', 'type': 'movie', 'ratingKey': '1', 'title': 'A'},
+            {'id': 'b', 'type': 'movie', 'ratingKey': '2', 'title': 'B'},
+            {'id': 'c', 'type': 'movie', 'ratingKey': '3', 'title': 'C'},
+        ]
+        result = build_synthetic_listing_xml(targets)
+        root = ET.fromstring(result)
+
+        self.assertEqual(root.get('size'), '3')
+        self.assertEqual(root.get('totalSize'), '3')
+        self.assertEqual(root.get('offset'), '0')
+
+
+class TestBuildSyntheticChildrenXml(unittest.TestCase):
+    """Tests for build_synthetic_children_xml function"""
+
+    def test_returns_children_of_parent(self):
+        """Should return items with matching parentRatingKey"""
+        targets = [
+            {'id': 'show', 'type': 'show', 'ratingKey': '100', 'title': 'Breaking Bad'},
+            {'id': 's1', 'type': 'season', 'ratingKey': '200', 'title': 'Season 1', 'parentRatingKey': '100'},
+            {'id': 's2', 'type': 'season', 'ratingKey': '201', 'title': 'Season 2', 'parentRatingKey': '100'},
+            {'id': 'other', 'type': 'season', 'ratingKey': '300', 'title': 'Other Season', 'parentRatingKey': '999'},
+        ]
+        result = build_synthetic_children_xml('100', targets)
+        root = ET.fromstring(result)
+
+        self.assertEqual(root.get('size'), '2')
+        dirs = root.findall('Directory')
+        self.assertEqual(len(dirs), 2)
+
+        keys = {d.get('ratingKey') for d in dirs}
+        self.assertEqual(keys, {'200', '201'})
+
+    def test_returns_grandchildren_of_grandparent(self):
+        """Should return items with matching grandparentRatingKey"""
+        targets = [
+            {'id': 'ep1', 'type': 'episode', 'ratingKey': '300', 'title': 'Ep 1',
+             'parentRatingKey': '200', 'grandparentRatingKey': '100'},
+        ]
+        # Query for show (grandparent)
+        result = build_synthetic_children_xml('100', targets)
+        root = ET.fromstring(result)
+
+        self.assertEqual(root.get('size'), '1')
+
+    def test_empty_when_no_children(self):
+        """Should return empty when parent has no children"""
+        targets = [
+            {'id': 'movie', 'type': 'movie', 'ratingKey': '100', 'title': 'Matrix'},
+        ]
+        result = build_synthetic_children_xml('100', targets)
+        root = ET.fromstring(result)
+
+        self.assertEqual(root.get('size'), '0')
+
+    def test_uses_metadata_cache_for_parent_keys(self):
+        """Should use metadata cache to find children"""
+        targets = [
+            {'id': 'ep1', 'type': 'episode', 'ratingKey': '300', 'title': 'Episode 1'},
+        ]
+        metadata_cache = {
+            '300': {
+                'ratingKey': '300',
+                'parentRatingKey': '200',
+                'grandparentRatingKey': '100',
+            }
+        }
+        result = build_synthetic_children_xml('200', targets, metadata_cache=metadata_cache)
+        root = ET.fromstring(result)
+
+        self.assertEqual(root.get('size'), '1')
+
+
+class TestIsLibrarySectionsEndpoint(unittest.TestCase):
+    """Tests for is_library_sections_endpoint function"""
+
+    def test_matches_library_sections(self):
+        """Should match /library/sections"""
+        self.assertTrue(is_library_sections_endpoint('/library/sections'))
+        self.assertTrue(is_library_sections_endpoint('/library/sections?X-Plex-Token=xxx'))
+
+    def test_not_match_sub_paths(self):
+        """Should NOT match sub-paths like /library/sections/1/all"""
+        self.assertFalse(is_library_sections_endpoint('/library/sections/1'))
+        self.assertFalse(is_library_sections_endpoint('/library/sections/1/all'))
+        self.assertFalse(is_library_sections_endpoint('/library/sections/1/search'))
+
+
+class TestIsChildrenEndpoint(unittest.TestCase):
+    """Tests for is_children_endpoint function"""
+
+    def test_matches_children_endpoint(self):
+        """Should match /library/metadata/{id}/children and return parent key"""
+        self.assertEqual(is_children_endpoint('/library/metadata/12345/children'), '12345')
+        self.assertEqual(is_children_endpoint('/library/metadata/999/children?X-Plex-Token=xxx'), '999')
+
+    def test_not_match_other_endpoints(self):
+        """Should not match non-children endpoints"""
+        self.assertIsNone(is_children_endpoint('/library/metadata/12345'))
+        self.assertIsNone(is_children_endpoint('/library/metadata/12345/posters'))
+        self.assertIsNone(is_children_endpoint('/library/sections/1/all'))
+
+
+class TestExtractSectionId(unittest.TestCase):
+    """Tests for extract_section_id function"""
+
+    def test_extracts_section_id(self):
+        """Should extract section ID from path"""
+        self.assertEqual(extract_section_id('/library/sections/1/all'), '1')
+        self.assertEqual(extract_section_id('/library/sections/123/search'), '123')
+        self.assertEqual(extract_section_id('/library/sections/42/genre'), '42')
+
+    def test_returns_none_when_not_found(self):
+        """Should return None for non-section paths"""
+        self.assertIsNone(extract_section_id('/library/search'))
+        self.assertIsNone(extract_section_id('/library/metadata/12345'))
+
+
+class TestExtractSearchQuery(unittest.TestCase):
+    """Tests for extract_search_query function"""
+
+    def test_extracts_query_parameter(self):
+        """Should extract query from query string"""
+        self.assertEqual(extract_search_query('/library/search?query=Matrix'), 'Matrix')
+        self.assertEqual(extract_search_query('/library/search?query=The%20Matrix'), 'The Matrix')
+
+    def test_extracts_title_parameter(self):
+        """Should extract title parameter"""
+        self.assertEqual(extract_search_query('/library/sections/1/all?title=Dune'), 'Dune')
+
+    def test_extracts_search_parameter(self):
+        """Should extract search parameter"""
+        self.assertEqual(extract_search_query('/hubs/search?search=Breaking'), 'Breaking')
+
+    def test_returns_none_when_not_found(self):
+        """Should return None when no search query"""
+        self.assertIsNone(extract_search_query('/library/sections/1/all'))
+        self.assertIsNone(extract_search_query('/library/search'))
+
+
+class TestExtractPreviewTargets(unittest.TestCase):
+    """Tests for extract_preview_targets function"""
+
+    def test_extracts_targets(self):
+        """Should extract full target list from config"""
+        config = {
+            'preview': {
+                'targets': [
+                    {'id': 'matrix', 'ratingKey': '100', 'title': 'Matrix'},
+                    {'id': 'dune', 'ratingKey': '200', 'title': 'Dune'},
+                ]
+            }
+        }
+        result = extract_preview_targets(config)
+        self.assertEqual(len(result), 2)
+        self.assertEqual(result[0]['id'], 'matrix')
+        self.assertEqual(result[1]['id'], 'dune')
+
+    def test_returns_empty_for_missing_config(self):
+        """Should return empty list for missing preview config"""
+        self.assertEqual(extract_preview_targets({}), [])
+        self.assertEqual(extract_preview_targets({'preview': {}}), [])
+
+
+class TestMockModeIntegration(unittest.TestCase):
+    """Integration tests for mock library mode"""
+
+    def test_mock_mode_full_flow(self):
+        """Test complete mock mode flow: config -> targets -> synthetic XML"""
+        config = {
+            'preview': {
+                'targets': [
+                    {'id': 'matrix', 'type': 'movie', 'ratingKey': '100', 'title': 'The Matrix', 'year': '1999'},
+                    {'id': 'dune', 'type': 'movie', 'ratingKey': '200', 'title': 'Dune', 'year': '2021'},
+                    {'id': 'bb', 'type': 'show', 'ratingKey': '300', 'title': 'Breaking Bad'},
+                    {'id': 'bb_s1', 'type': 'season', 'ratingKey': '301', 'title': 'Season 1', 'parentRatingKey': '300'},
+                    {'id': 'bb_s1e1', 'type': 'episode', 'ratingKey': '302', 'title': 'Pilot',
+                     'parentRatingKey': '301', 'grandparentRatingKey': '300'},
+                ]
+            }
+        }
+
+        # Extract targets and allowed keys
+        targets = extract_preview_targets(config)
+        allowed_keys = extract_allowed_rating_keys(config)
+
+        self.assertEqual(len(targets), 5)
+        self.assertEqual(allowed_keys, {'100', '200', '300', '301', '302'})
+
+        # Build sections XML
+        sections_xml = build_synthetic_library_sections_xml(targets)
+        sections_root = ET.fromstring(sections_xml)
+        self.assertEqual(sections_root.get('size'), '2')  # Movies and TV Shows
+
+        # Build listing XML
+        listing_xml = build_synthetic_listing_xml(targets)
+        listing_root = ET.fromstring(listing_xml)
+        self.assertEqual(listing_root.get('size'), '5')
+
+        # Build children XML for show
+        children_xml = build_synthetic_children_xml('300', targets)
+        children_root = ET.fromstring(children_xml)
+        self.assertEqual(children_root.get('size'), '2')  # season + episode (grandparent match)
+
+    def test_malformed_query_doesnt_break(self):
+        """Malformed query strings should not crash"""
+        targets = [
+            {'id': 'matrix', 'type': 'movie', 'ratingKey': '100', 'title': 'Matrix'},
+        ]
+
+        # Test various malformed queries
+        result = build_synthetic_listing_xml(targets, query=None)
+        root = ET.fromstring(result)
+        self.assertEqual(root.get('size'), '1')
+
+        result = build_synthetic_listing_xml(targets, query='')
+        root = ET.fromstring(result)
+        self.assertEqual(root.get('size'), '1')
+
+    def test_empty_allowlist_fallback(self):
+        """Empty allowlist should return empty results"""
+        targets = []
+        result = build_synthetic_listing_xml(targets)
+        root = ET.fromstring(result)
+        self.assertEqual(root.get('size'), '0')
 
 
 if __name__ == '__main__':

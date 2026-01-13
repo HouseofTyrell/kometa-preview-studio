@@ -57,6 +57,11 @@ logger = logging.getLogger('KometaPreview')
 PROXY_PORT = 32500
 PROXY_HOST = '127.0.0.1'
 
+# Mock library mode - prevents forwarding listing endpoints to real Plex
+# Set PREVIEW_MOCK_LIBRARY=0 to disable and fall back to filter mode
+MOCK_LIBRARY_ENABLED = os.environ.get('PREVIEW_MOCK_LIBRARY', '1') == '1'
+DEBUG_MOCK_XML = os.environ.get('PREVIEW_DEBUG_MOCK_XML', '0') == '1'
+
 # Plex upload endpoint patterns
 # Matches: /library/metadata/<ratingKey>/posters, /library/metadata/<ratingKey>/arts, etc.
 PLEX_UPLOAD_PATTERN = re.compile(
@@ -98,6 +103,15 @@ ARTWORK_PATTERNS = [
     re.compile(r'^/library/metadata/(\d+)/(thumb|art|poster|banner|background)(?:/.*)?(?:\?.*)?$'),
     re.compile(r'^/photo/:/transcode\?.*url=.*metadata%2F(\d+)'),  # Transcoded photos
 ]
+
+# Library sections endpoint - used to get list of library sections
+LIBRARY_SECTIONS_PATTERN = re.compile(r'^/library/sections(?:\?.*)?$')
+
+# Section ID extraction pattern
+SECTION_ID_PATTERN = re.compile(r'^/library/sections/(\d+)/')
+
+# Children endpoint pattern (for getting seasons of a show, episodes of a season)
+CHILDREN_PATTERN = re.compile(r'^/library/metadata/(\d+)/children(?:\?.*)?$')
 
 
 # ============================================================================
@@ -268,6 +282,361 @@ def extract_allowed_rating_keys(preview_config: Dict[str, Any]) -> Set[str]:
     return allowed
 
 
+def extract_preview_targets(preview_config: Dict[str, Any]) -> List[Dict[str, Any]]:
+    """
+    Extract the list of preview targets with all their metadata.
+
+    Args:
+        preview_config: Loaded preview.yml configuration
+
+    Returns:
+        List of target dicts with ratingKey, type, title, etc.
+    """
+    preview_data = preview_config.get('preview', {})
+    return preview_data.get('targets', [])
+
+
+# ============================================================================
+# Mock Library Mode - Synthetic XML Generation
+# ============================================================================
+
+def build_synthetic_library_sections_xml(targets: List[Dict[str, Any]]) -> bytes:
+    """
+    Build synthetic /library/sections XML response.
+
+    Creates minimal library sections based on target types.
+
+    Args:
+        targets: List of preview targets
+
+    Returns:
+        XML bytes for MediaContainer with Directory elements for sections
+    """
+    # Determine which section types we need based on targets
+    has_movies = any(t.get('type') in ('movie', 'movies') for t in targets)
+    has_shows = any(t.get('type') in ('show', 'shows', 'series', 'season', 'episode') for t in targets)
+
+    sections = []
+
+    if has_movies:
+        sections.append({
+            'key': '1',
+            'type': 'movie',
+            'title': 'Movies',
+            'agent': 'tv.plex.agents.movie',
+            'scanner': 'Plex Movie',
+        })
+
+    if has_shows:
+        sections.append({
+            'key': '2',
+            'type': 'show',
+            'title': 'TV Shows',
+            'agent': 'tv.plex.agents.series',
+            'scanner': 'Plex TV Series',
+        })
+
+    # If no types detected, create both sections as fallback
+    if not sections:
+        sections = [
+            {'key': '1', 'type': 'movie', 'title': 'Movies', 'agent': 'tv.plex.agents.movie', 'scanner': 'Plex Movie'},
+            {'key': '2', 'type': 'show', 'title': 'TV Shows', 'agent': 'tv.plex.agents.series', 'scanner': 'Plex TV Series'},
+        ]
+
+    root = ET.Element('MediaContainer', {
+        'size': str(len(sections)),
+        'allowSync': '0',
+        'title1': 'Plex Library',
+    })
+
+    for section in sections:
+        ET.SubElement(root, 'Directory', {
+            'allowSync': '1',
+            'art': f'/:/resources/movie-fanart.jpg',
+            'composite': f'/library/sections/{section["key"]}/composite/1234',
+            'filters': '1',
+            'refreshing': '0',
+            'thumb': f'/:/resources/movie.png',
+            'key': section['key'],
+            'type': section['type'],
+            'title': section['title'],
+            'agent': section['agent'],
+            'scanner': section['scanner'],
+            'language': 'en-US',
+            'uuid': f'mock-uuid-{section["key"]}',
+        })
+
+    return ET.tostring(root, encoding='unicode').encode('utf-8')
+
+
+def build_synthetic_listing_xml(
+    targets: List[Dict[str, Any]],
+    section_id: Optional[str] = None,
+    query: Optional[str] = None,
+    metadata_cache: Optional[Dict[str, ET.Element]] = None
+) -> bytes:
+    """
+    Build synthetic XML for library listing endpoints.
+
+    Creates a MediaContainer with only the preview target items.
+
+    Args:
+        targets: List of preview targets
+        section_id: Optional library section ID to filter by
+        query: Optional search query to filter by
+        metadata_cache: Optional cache of metadata XML elements keyed by ratingKey
+
+    Returns:
+        XML bytes for MediaContainer with Video/Directory elements
+    """
+    items = []
+
+    for target in targets:
+        rating_key = str(
+            target.get('ratingKey') or
+            target.get('rating_key') or
+            target.get('plex_id') or
+            ''
+        )
+
+        if not rating_key:
+            continue
+
+        target_type = target.get('type', 'movie').lower()
+        title = target.get('title', f'Item {rating_key}')
+        year = target.get('year', '')
+
+        # Get parent keys from target or cache
+        parent_rating_key = target.get('parentRatingKey') or target.get('parent_rating_key', '')
+        grandparent_rating_key = target.get('grandparentRatingKey') or target.get('grandparent_rating_key', '')
+
+        # Try to get from cache if not in target
+        if metadata_cache and rating_key in metadata_cache:
+            cached = metadata_cache[rating_key]
+            if not parent_rating_key:
+                parent_rating_key = cached.get('parentRatingKey', '')
+            if not grandparent_rating_key:
+                grandparent_rating_key = cached.get('grandparentRatingKey', '')
+            # Also get title/year if missing
+            if title == f'Item {rating_key}':
+                title = cached.get('title', title)
+            if not year:
+                year = cached.get('year', '')
+
+        # Build the item element based on type
+        if target_type in ('movie', 'movies'):
+            elem = ET.Element('Video', {
+                'ratingKey': rating_key,
+                'key': f'/library/metadata/{rating_key}',
+                'type': 'movie',
+                'title': title,
+            })
+            if year:
+                elem.set('year', str(year))
+            elem.set('thumb', f'/library/metadata/{rating_key}/thumb')
+            elem.set('art', f'/library/metadata/{rating_key}/art')
+            items.append(elem)
+
+        elif target_type in ('show', 'shows', 'series'):
+            elem = ET.Element('Directory', {
+                'ratingKey': rating_key,
+                'key': f'/library/metadata/{rating_key}/children',
+                'type': 'show',
+                'title': title,
+            })
+            if year:
+                elem.set('year', str(year))
+            elem.set('thumb', f'/library/metadata/{rating_key}/thumb')
+            elem.set('art', f'/library/metadata/{rating_key}/art')
+            items.append(elem)
+
+        elif target_type == 'season':
+            elem = ET.Element('Directory', {
+                'ratingKey': rating_key,
+                'key': f'/library/metadata/{rating_key}/children',
+                'type': 'season',
+                'title': title,
+                'index': str(target.get('index', target.get('seasonNumber', 1))),
+            })
+            if parent_rating_key:
+                elem.set('parentRatingKey', str(parent_rating_key))
+            elem.set('thumb', f'/library/metadata/{rating_key}/thumb')
+            items.append(elem)
+
+        elif target_type == 'episode':
+            elem = ET.Element('Video', {
+                'ratingKey': rating_key,
+                'key': f'/library/metadata/{rating_key}',
+                'type': 'episode',
+                'title': title,
+                'index': str(target.get('index', target.get('episodeNumber', 1))),
+                'parentIndex': str(target.get('parentIndex', target.get('seasonNumber', 1))),
+            })
+            if parent_rating_key:
+                elem.set('parentRatingKey', str(parent_rating_key))
+            if grandparent_rating_key:
+                elem.set('grandparentRatingKey', str(grandparent_rating_key))
+            elem.set('thumb', f'/library/metadata/{rating_key}/thumb')
+            items.append(elem)
+
+        else:
+            # Unknown type - default to Video
+            elem = ET.Element('Video', {
+                'ratingKey': rating_key,
+                'key': f'/library/metadata/{rating_key}',
+                'type': target_type,
+                'title': title,
+            })
+            items.append(elem)
+
+    # Apply search filter if query provided
+    if query:
+        query_lower = query.lower()
+        items = [
+            item for item in items
+            if query_lower in item.get('title', '').lower()
+        ]
+
+    # Build MediaContainer
+    root = ET.Element('MediaContainer', {
+        'size': str(len(items)),
+        'totalSize': str(len(items)),
+        'offset': '0',
+        'allowSync': '1',
+    })
+
+    for item in items:
+        root.append(item)
+
+    return ET.tostring(root, encoding='unicode').encode('utf-8')
+
+
+def build_synthetic_children_xml(
+    parent_rating_key: str,
+    targets: List[Dict[str, Any]],
+    metadata_cache: Optional[Dict[str, ET.Element]] = None
+) -> bytes:
+    """
+    Build synthetic XML for /library/metadata/{id}/children endpoint.
+
+    Returns children (seasons or episodes) that are in our preview targets.
+
+    Args:
+        parent_rating_key: The ratingKey of the parent item
+        targets: List of preview targets
+        metadata_cache: Optional cache of metadata XML elements
+
+    Returns:
+        XML bytes for MediaContainer with child elements
+    """
+    children = []
+
+    for target in targets:
+        rating_key = str(
+            target.get('ratingKey') or
+            target.get('rating_key') or
+            target.get('plex_id') or
+            ''
+        )
+
+        if not rating_key:
+            continue
+
+        # Check if this target's parent matches
+        target_parent = str(
+            target.get('parentRatingKey') or
+            target.get('parent_rating_key') or
+            ''
+        )
+        target_grandparent = str(
+            target.get('grandparentRatingKey') or
+            target.get('grandparent_rating_key') or
+            ''
+        )
+
+        # Also check metadata cache for parent relationships
+        if metadata_cache and rating_key in metadata_cache:
+            cached = metadata_cache[rating_key]
+            if not target_parent:
+                target_parent = cached.get('parentRatingKey', '')
+            if not target_grandparent:
+                target_grandparent = cached.get('grandparentRatingKey', '')
+
+        # This item is a child if its parent or grandparent matches
+        if target_parent == parent_rating_key or target_grandparent == parent_rating_key:
+            target_type = target.get('type', '').lower()
+            title = target.get('title', f'Item {rating_key}')
+
+            if target_type == 'season':
+                elem = ET.Element('Directory', {
+                    'ratingKey': rating_key,
+                    'key': f'/library/metadata/{rating_key}/children',
+                    'type': 'season',
+                    'title': title,
+                    'index': str(target.get('index', target.get('seasonNumber', 1))),
+                    'parentRatingKey': parent_rating_key,
+                })
+                children.append(elem)
+
+            elif target_type == 'episode':
+                elem = ET.Element('Video', {
+                    'ratingKey': rating_key,
+                    'key': f'/library/metadata/{rating_key}',
+                    'type': 'episode',
+                    'title': title,
+                    'index': str(target.get('index', target.get('episodeNumber', 1))),
+                    'parentIndex': str(target.get('parentIndex', target.get('seasonNumber', 1))),
+                    'parentRatingKey': target_parent,
+                })
+                if target_grandparent:
+                    elem.set('grandparentRatingKey', target_grandparent)
+                children.append(elem)
+
+    root = ET.Element('MediaContainer', {
+        'size': str(len(children)),
+        'totalSize': str(len(children)),
+    })
+
+    for child in children:
+        root.append(child)
+
+    return ET.tostring(root, encoding='unicode').encode('utf-8')
+
+
+def is_library_sections_endpoint(path: str) -> bool:
+    """Check if path is /library/sections (not a sub-path)."""
+    path_base = path.split('?')[0]
+    return LIBRARY_SECTIONS_PATTERN.match(path_base) is not None
+
+
+def is_children_endpoint(path: str) -> Optional[str]:
+    """
+    Check if path is /library/metadata/{id}/children.
+
+    Returns the parent ratingKey if it matches, None otherwise.
+    """
+    path_base = path.split('?')[0]
+    match = CHILDREN_PATTERN.match(path_base)
+    return match.group(1) if match else None
+
+
+def extract_section_id(path: str) -> Optional[str]:
+    """Extract library section ID from path."""
+    match = SECTION_ID_PATTERN.match(path)
+    return match.group(1) if match else None
+
+
+def extract_search_query(path: str) -> Optional[str]:
+    """Extract search query from path query string."""
+    parsed = urlsplit(path)
+    params = parse_qs(parsed.query)
+    # Check common query parameter names
+    for key in ('query', 'title', 'search'):
+        if key in params:
+            return params[key][0]
+    return None
+
+
 # ============================================================================
 # Plex Write-Blocking Proxy Server with Upload Capture
 # ============================================================================
@@ -279,6 +648,11 @@ class PlexProxyHandler(BaseHTTPRequestHandler):
 
     This provides process-boundary-safe write blocking because Kometa
     (running as subprocess) connects to this proxy instead of real Plex.
+
+    Mock Library Mode:
+    When enabled (default when allowlist is present), listing endpoints
+    return synthetic XML with only preview targets, without forwarding to
+    real Plex. This prevents giant library enumeration.
     """
 
     # Class-level configuration (set before server starts)
@@ -293,23 +667,72 @@ class PlexProxyHandler(BaseHTTPRequestHandler):
     allowed_rating_keys: Set[str] = set()
     filtering_enabled: bool = False
 
+    # Mock library mode configuration
+    mock_mode_enabled: bool = False
+    preview_targets: List[Dict[str, Any]] = []
+
+    # Metadata cache for learning parent relationships
+    # Key: ratingKey, Value: dict of attributes from metadata response
+    metadata_cache: Dict[str, Dict[str, str]] = {}
+    # Dynamically learned parent ratingKeys (parents of allowed items)
+    parent_rating_keys: Set[str] = set()
+
     # Captured data
     blocked_requests: List[Dict[str, str]] = []
     captured_uploads: List[Dict[str, Any]] = []
     filtered_requests: List[Dict[str, Any]] = []  # Track filtered listing requests
+    mock_list_requests: List[Dict[str, Any]] = []  # Track mock mode requests
     data_lock = threading.Lock()
+
+    # Counters for summary
+    forward_request_count: int = 0
+    blocked_metadata_count: int = 0
 
     def log_message(self, format, *args):
         """Override to use our logger"""
         logger.debug(f"PROXY: {args[0]}")
 
     def do_GET(self):
-        """Forward GET requests to real Plex"""
-        # Log ALL GET requests for debugging
-        path_base = self.path.split('?')[0]
-        is_listing = is_listing_endpoint(self.path)
-        is_meta = is_metadata_endpoint(self.path)
-        logger.info(f"PROXY_GET path={path_base} is_listing={is_listing} is_metadata={is_meta}")
+        """Forward GET requests to real Plex (or return synthetic XML in mock mode)"""
+        path = self.path
+        path_base = path.split('?')[0]
+        is_listing = is_listing_endpoint(path)
+        is_meta = is_metadata_endpoint(path)
+        is_sections = is_library_sections_endpoint(path)
+        children_parent = is_children_endpoint(path)
+
+        logger.info(
+            f"PROXY_GET path={path_base} is_listing={is_listing} "
+            f"is_metadata={is_meta} is_sections={is_sections}"
+        )
+
+        # Mock library mode: return synthetic XML for listing endpoints
+        if self.mock_mode_enabled and self.allowed_rating_keys:
+            # Handle /library/sections endpoint
+            if is_sections:
+                self._handle_mock_sections()
+                return
+
+            # Handle listing endpoints (all, search, browse)
+            if is_listing:
+                self._handle_mock_listing(path)
+                return
+
+            # Handle /library/metadata/{id}/children endpoint
+            if children_parent:
+                # Check if parent is in our allowlist or is a parent of allowed items
+                if children_parent in self.allowed_rating_keys or children_parent in self.parent_rating_keys:
+                    self._handle_mock_children(children_parent)
+                    return
+                else:
+                    # Block children requests for non-allowed parents
+                    logger.info(f"BLOCK_CHILDREN parentRatingKey={children_parent} not allowed")
+                    self._send_empty_container()
+                    with self.data_lock:
+                        self.blocked_metadata_count += 1
+                    return
+
+        # Not in mock mode or not a listing endpoint - use standard forwarding
         self._forward_request('GET')
 
     def do_HEAD(self):
@@ -333,7 +756,7 @@ class PlexProxyHandler(BaseHTTPRequestHandler):
         self._block_request('DELETE')
 
     def _forward_request(self, method: str):
-        """Forward a read request to the real Plex server, with optional filtering"""
+        """Forward a read request to the real Plex server, with optional filtering and caching"""
         try:
             path = self.path
 
@@ -341,6 +764,7 @@ class PlexProxyHandler(BaseHTTPRequestHandler):
             should_filter_listing = (
                 self.filtering_enabled and
                 self.allowed_rating_keys and
+                not self.mock_mode_enabled and  # Don't filter in mock mode (we don't forward)
                 is_listing_endpoint(path)
             )
 
@@ -350,13 +774,31 @@ class PlexProxyHandler(BaseHTTPRequestHandler):
                 is_metadata_endpoint(path)
             )
 
-            # If this is a metadata endpoint for a non-allowed item, block it
-            if should_block_metadata:
+            # Check if this is a metadata request that we should cache
+            should_cache_metadata = (
+                self.mock_mode_enabled and
+                self.allowed_rating_keys and
+                is_metadata_endpoint(path)
+            )
+
+            # If this is a metadata endpoint, check if it's allowed
+            if should_block_metadata or should_cache_metadata:
                 rating_key = extract_rating_key_from_path(path)
-                if rating_key and rating_key not in self.allowed_rating_keys:
+
+                # Allow if: in allowlist, or is a parent of allowed items
+                is_allowed = (
+                    rating_key in self.allowed_rating_keys or
+                    rating_key in self.parent_rating_keys
+                )
+
+                if rating_key and not is_allowed:
                     logger.info(f"BLOCK_METADATA ratingKey={rating_key} not in allowlist")
                     self._send_empty_container()
+                    with self.data_lock:
+                        self.blocked_metadata_count += 1
                     return
+                elif rating_key and is_allowed:
+                    logger.info(f"ALLOW_FORWARD ratingKey={rating_key} endpoint={path.split('?')[0]}")
 
             # Create connection to real Plex
             if self.real_plex_scheme == 'https':
@@ -392,7 +834,15 @@ class PlexProxyHandler(BaseHTTPRequestHandler):
             # Read full response body for potential filtering
             response_body = response.read()
 
-            # Filter listing responses if enabled
+            # Track forward count
+            with self.data_lock:
+                self.forward_request_count += 1
+
+            # Cache metadata response for parent relationship learning
+            if should_cache_metadata and response.status == 200 and rating_key:
+                self._cache_metadata_response(rating_key, response_body)
+
+            # Filter listing responses if enabled (non-mock mode only)
             if should_filter_listing and response.status == 200:
                 content_type = response.getheader('Content-Type', '')
 
@@ -481,6 +931,158 @@ class PlexProxyHandler(BaseHTTPRequestHandler):
         self.send_header('Content-Length', str(len(response_body)))
         self.end_headers()
         self.wfile.write(response_body)
+
+    def _send_xml_response(self, xml_bytes: bytes):
+        """Send an XML response."""
+        self.send_response(200)
+        self.send_header('Content-Type', 'text/xml; charset=utf-8')
+        self.send_header('Content-Length', str(len(xml_bytes)))
+        self.end_headers()
+        self.wfile.write(xml_bytes)
+
+    def _handle_mock_sections(self):
+        """Handle /library/sections in mock mode - return synthetic sections."""
+        xml_bytes = build_synthetic_library_sections_xml(self.preview_targets)
+
+        # Debug logging
+        if DEBUG_MOCK_XML:
+            logger.debug(f"MOCK_SECTIONS_XML: {xml_bytes[:500].decode('utf-8', errors='replace')}")
+
+        # Parse to count sections
+        try:
+            root = ET.fromstring(xml_bytes)
+            section_count = len(list(root))
+        except Exception:
+            section_count = -1
+
+        logger.info(f"MOCK_SECTIONS returned_sections={section_count}")
+
+        with self.data_lock:
+            self.mock_list_requests.append({
+                'path': '/library/sections',
+                'type': 'sections',
+                'returned_items': section_count,
+                'timestamp': datetime.now().isoformat()
+            })
+
+        self._send_xml_response(xml_bytes)
+
+    def _handle_mock_listing(self, path: str):
+        """Handle listing endpoints in mock mode - return synthetic item list."""
+        section_id = extract_section_id(path)
+        query = extract_search_query(path)
+
+        xml_bytes = build_synthetic_listing_xml(
+            self.preview_targets,
+            section_id=section_id,
+            query=query,
+            metadata_cache=self.metadata_cache
+        )
+
+        # Debug logging
+        if DEBUG_MOCK_XML:
+            logger.debug(f"MOCK_LIST_XML: {xml_bytes[:500].decode('utf-8', errors='replace')}")
+
+        # Parse to count items
+        try:
+            root = ET.fromstring(xml_bytes)
+            item_count = int(root.get('size', '0'))
+        except Exception:
+            item_count = -1
+
+        path_base = path.split('?')[0]
+        logger.info(f"MOCK_LIST endpoint={path_base} returned_items={item_count}")
+
+        with self.data_lock:
+            self.mock_list_requests.append({
+                'path': path,
+                'type': 'listing',
+                'section_id': section_id,
+                'query': query,
+                'returned_items': item_count,
+                'timestamp': datetime.now().isoformat()
+            })
+
+        self._send_xml_response(xml_bytes)
+
+    def _handle_mock_children(self, parent_rating_key: str):
+        """Handle /library/metadata/{id}/children in mock mode."""
+        xml_bytes = build_synthetic_children_xml(
+            parent_rating_key,
+            self.preview_targets,
+            metadata_cache=self.metadata_cache
+        )
+
+        # Debug logging
+        if DEBUG_MOCK_XML:
+            logger.debug(f"MOCK_CHILDREN_XML: {xml_bytes[:500].decode('utf-8', errors='replace')}")
+
+        # Parse to count children
+        try:
+            root = ET.fromstring(xml_bytes)
+            child_count = int(root.get('size', '0'))
+        except Exception:
+            child_count = -1
+
+        logger.info(f"MOCK_CHILDREN parentRatingKey={parent_rating_key} returned_items={child_count}")
+
+        with self.data_lock:
+            self.mock_list_requests.append({
+                'path': f'/library/metadata/{parent_rating_key}/children',
+                'type': 'children',
+                'parent_rating_key': parent_rating_key,
+                'returned_items': child_count,
+                'timestamp': datetime.now().isoformat()
+            })
+
+        self._send_xml_response(xml_bytes)
+
+    def _cache_metadata_response(self, rating_key: str, response_body: bytes):
+        """
+        Cache metadata response and learn parent relationships.
+
+        When we forward a metadata request for an allowed item, we cache the
+        response to learn parent/grandparent ratingKey relationships.
+        """
+        try:
+            root = ET.fromstring(response_body)
+
+            # Find the main item element (Video, Directory, etc.)
+            item = None
+            for child in root:
+                if child.get('ratingKey') == rating_key:
+                    item = child
+                    break
+
+            if item is None and len(list(root)) > 0:
+                # Sometimes the item is the root's first child
+                item = list(root)[0]
+
+            if item is not None:
+                # Cache the attributes
+                cached_attrs = dict(item.attrib)
+
+                with self.data_lock:
+                    self.metadata_cache[rating_key] = cached_attrs
+
+                    # Learn parent relationships
+                    parent_key = cached_attrs.get('parentRatingKey')
+                    grandparent_key = cached_attrs.get('grandparentRatingKey')
+
+                    if parent_key and parent_key not in self.allowed_rating_keys:
+                        self.parent_rating_keys.add(parent_key)
+                        logger.info(f"LEARNED_PARENT ratingKey={rating_key} parentRatingKey={parent_key}")
+
+                    if grandparent_key and grandparent_key not in self.allowed_rating_keys:
+                        self.parent_rating_keys.add(grandparent_key)
+                        logger.info(f"LEARNED_GRANDPARENT ratingKey={rating_key} grandparentRatingKey={grandparent_key}")
+
+                logger.debug(f"CACHED_METADATA ratingKey={rating_key} type={cached_attrs.get('type')}")
+
+        except ET.ParseError as e:
+            logger.warning(f"CACHE_METADATA_PARSE_ERROR ratingKey={rating_key}: {e}")
+        except Exception as e:
+            logger.warning(f"CACHE_METADATA_ERROR ratingKey={rating_key}: {e}")
 
     def _block_request(self, method: str):
         """Block a write request without capturing (for DELETE/PATCH)"""
@@ -778,7 +1380,13 @@ class PlexProxy:
     """
     Manages the Plex write-blocking proxy server with upload capture and optional filtering.
 
-    Filtering Mode:
+    Mock Library Mode (default when allowlist is present):
+    - Listing endpoints return synthetic XML with only preview targets
+    - Does NOT forward listing requests to real Plex (avoids giant responses)
+    - Metadata requests are only forwarded for allowed ratingKeys and their parents
+    - Parent relationships are learned dynamically from forwarded metadata
+
+    Filtering Mode (legacy, when PREVIEW_MOCK_LIBRARY=0):
     - When allowed_rating_keys is provided, the proxy filters library listing endpoints
       to only include items with those ratingKeys
     - Metadata endpoints for non-allowed ratingKeys return empty containers
@@ -790,12 +1398,14 @@ class PlexProxy:
         real_plex_url: str,
         plex_token: str,
         job_path: Path,
-        allowed_rating_keys: Optional[Set[str]] = None
+        allowed_rating_keys: Optional[Set[str]] = None,
+        preview_targets: Optional[List[Dict[str, Any]]] = None
     ):
         self.real_plex_url = real_plex_url.rstrip('/')
         self.plex_token = plex_token
         self.job_path = job_path
         self.allowed_rating_keys = allowed_rating_keys or set()
+        self.preview_targets = preview_targets or []
 
         # Parse the real Plex URL
         parsed = urlparse(real_plex_url)
@@ -805,6 +1415,14 @@ class PlexProxy:
 
         self.server: Optional[HTTPServer] = None
         self.server_thread: Optional[threading.Thread] = None
+
+        # Determine if mock mode should be enabled
+        # Enabled by default when we have allowlist and MOCK_LIBRARY_ENABLED env is not '0'
+        self._mock_mode_enabled = (
+            MOCK_LIBRARY_ENABLED and
+            len(self.allowed_rating_keys) > 0 and
+            len(self.preview_targets) > 0
+        )
 
         # Configure the handler class
         PlexProxyHandler.real_plex_url = self.real_plex_url
@@ -816,10 +1434,19 @@ class PlexProxy:
         PlexProxyHandler.blocked_requests = []
         PlexProxyHandler.captured_uploads = []
         PlexProxyHandler.filtered_requests = []
+        PlexProxyHandler.mock_list_requests = []
 
         # Configure filtering
         PlexProxyHandler.allowed_rating_keys = self.allowed_rating_keys
         PlexProxyHandler.filtering_enabled = len(self.allowed_rating_keys) > 0
+
+        # Configure mock mode
+        PlexProxyHandler.mock_mode_enabled = self._mock_mode_enabled
+        PlexProxyHandler.preview_targets = self.preview_targets
+        PlexProxyHandler.metadata_cache = {}
+        PlexProxyHandler.parent_rating_keys = set()
+        PlexProxyHandler.forward_request_count = 0
+        PlexProxyHandler.blocked_metadata_count = 0
 
     @property
     def proxy_url(self) -> str:
@@ -831,22 +1458,33 @@ class PlexProxy:
         """Whether filtering is active"""
         return len(self.allowed_rating_keys) > 0
 
+    @property
+    def mock_mode_enabled(self) -> bool:
+        """Whether mock library mode is active"""
+        return self._mock_mode_enabled
+
     def start(self):
         """Start the proxy server in a background thread"""
         self.server = HTTPServer((PROXY_HOST, PROXY_PORT), PlexProxyHandler)
         self.server_thread = threading.Thread(target=self.server.serve_forever, daemon=True)
         self.server_thread.start()
         logger.info(f"Plex proxy started at {self.proxy_url}")
-        logger.info(f"  Forwarding reads to: {self.real_plex_url}")
         logger.info(f"  Blocking and capturing writes")
         logger.info(f"  Captures saved to: {self.job_path}/output/by_ratingkey/")
 
-        # Log filtering status
-        if self.filtering_enabled:
-            logger.info(f"  FILTERING ENABLED: Only {len(self.allowed_rating_keys)} items allowed")
+        # Log mock mode vs filtering mode status
+        if self.mock_mode_enabled:
+            logger.info(f"  MOCK_LIBRARY_MODE ENABLED: Only {len(self.allowed_rating_keys)} items visible")
+            logger.info(f"  Listing endpoints will NOT be forwarded to Plex")
+            logger.info(f"  Metadata requests forwarded only for allowed ratingKeys")
+            logger.info(f"  Allowed ratingKeys: {sorted(self.allowed_rating_keys)}")
+        elif self.filtering_enabled:
+            logger.info(f"  FILTER_MODE ENABLED: Only {len(self.allowed_rating_keys)} items allowed")
+            logger.info(f"  Forwarding reads to: {self.real_plex_url}")
             logger.info(f"  Allowed ratingKeys: {sorted(self.allowed_rating_keys)}")
         else:
             logger.warning(f"  FILTERING DISABLED: All items will be processed")
+            logger.info(f"  Forwarding reads to: {self.real_plex_url}")
 
     def stop(self):
         """Stop the proxy server"""
@@ -868,6 +1506,26 @@ class PlexProxy:
         """Return list of filtered listing requests"""
         with PlexProxyHandler.data_lock:
             return PlexProxyHandler.filtered_requests.copy()
+
+    def get_mock_list_requests(self) -> List[Dict[str, Any]]:
+        """Return list of mock mode listing requests"""
+        with PlexProxyHandler.data_lock:
+            return PlexProxyHandler.mock_list_requests.copy()
+
+    def get_forward_request_count(self) -> int:
+        """Return count of forwarded requests"""
+        with PlexProxyHandler.data_lock:
+            return PlexProxyHandler.forward_request_count
+
+    def get_blocked_metadata_count(self) -> int:
+        """Return count of blocked metadata requests"""
+        with PlexProxyHandler.data_lock:
+            return PlexProxyHandler.blocked_metadata_count
+
+    def get_learned_parent_keys(self) -> Set[str]:
+        """Return set of dynamically learned parent ratingKeys"""
+        with PlexProxyHandler.data_lock:
+            return PlexProxyHandler.parent_rating_keys.copy()
 
 
 # ============================================================================
@@ -1231,10 +1889,14 @@ def main():
         logger.warning("No ratingKeys found in preview targets - filtering will be DISABLED")
         logger.warning("Kometa will process ALL library items (may be slow)")
     else:
-        logger.info(f"Filtering proxy will only expose {len(allowed_rating_keys)} items to Kometa")
+        logger.info(f"Proxy will only expose {len(allowed_rating_keys)} items to Kometa")
 
-    # Start the write-blocking proxy with capture AND filtering
-    proxy = PlexProxy(real_plex_url, plex_token, job_path, allowed_rating_keys)
+    # Start the write-blocking proxy with capture, filtering, and mock mode
+    proxy = PlexProxy(
+        real_plex_url, plex_token, job_path,
+        allowed_rating_keys=allowed_rating_keys,
+        preview_targets=targets
+    )
 
     try:
         proxy.start()
@@ -1257,10 +1919,23 @@ def main():
         blocked_requests = proxy.get_blocked_requests()
         captured_uploads = proxy.get_captured_uploads()
         filtered_requests = proxy.get_filtered_requests()
+        mock_list_requests = proxy.get_mock_list_requests()
+        forward_count = proxy.get_forward_request_count()
+        blocked_metadata_count = proxy.get_blocked_metadata_count()
+        learned_parents = proxy.get_learned_parent_keys()
 
         logger.info(f"Blocked {len(blocked_requests)} write attempts")
         logger.info(f"Captured {len(captured_uploads)} uploads")
-        logger.info(f"Filtered {len(filtered_requests)} listing requests")
+
+        # Log mock mode vs filter mode statistics
+        if proxy.mock_mode_enabled:
+            logger.info(f"Mock list requests: {len(mock_list_requests)}")
+            logger.info(f"Forwarded requests: {forward_count}")
+            logger.info(f"Blocked metadata requests: {blocked_metadata_count}")
+            if learned_parents:
+                logger.info(f"Learned parent ratingKeys: {sorted(learned_parents)}")
+        else:
+            logger.info(f"Filtered {len(filtered_requests)} listing requests")
 
         # Log capture summary
         successful_captures = [u for u in captured_uploads if u.get('saved_path')]
@@ -1293,9 +1968,18 @@ def main():
             'exported_files': exported_files,
             'missing_targets': missing_targets,
             'output_files': [f.name for f in output_dir.glob('*_after.*')],
-            # Filtering statistics
+            # Mock library mode statistics
+            'mock_mode': {
+                'enabled': proxy.mock_mode_enabled,
+                'mock_list_requests': mock_list_requests,
+                'mock_list_requests_count': len(mock_list_requests),
+                'forward_requests_count': forward_count,
+                'blocked_metadata_count': blocked_metadata_count,
+                'learned_parent_keys': sorted(learned_parents) if learned_parents else [],
+            },
+            # Legacy filtering statistics (when mock mode disabled)
             'filtering': {
-                'enabled': proxy.filtering_enabled,
+                'enabled': proxy.filtering_enabled and not proxy.mock_mode_enabled,
                 'allowed_rating_keys': sorted(allowed_rating_keys) if allowed_rating_keys else [],
                 'allowed_count': len(allowed_rating_keys),
                 'filtered_requests': filtered_requests,

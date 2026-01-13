@@ -3,28 +3,42 @@
 ## Overview
 
 The preview renderer runs **real Kometa** with a **local HTTP proxy** that:
-1. **Blocks all write operations** to Plex (captures uploaded images)
-2. **Filters library listings** to only show the preview targets (5 items)
+1. **Returns synthetic library data** for only the 5 preview items (mock mode)
+2. **Does NOT forward listing requests** to real Plex (avoids giant responses)
+3. **Blocks all write operations** to Plex (captures uploaded images)
+4. **Forwards metadata requests** only for allowed ratingKeys and their parents
 
 This ensures pixel-identical overlay output with zero risk of modifying Plex,
 while processing **only the preview items** instead of your entire library.
 
-## Why Filtering Matters
+## Why Mock Library Mode Matters
 
-Without filtering, Kometa would enumerate your entire library and process
-hundreds or thousands of items, even though we only want to preview 5.
+Without mock mode, the proxy would forward listing requests to real Plex and
+filter the XML response afterward. For large libraries this means:
 
-**Before (no filtering):**
-- Kometa queries `/library/sections/1/all` → receives 2000+ items
-- Processes all items → takes 10+ minutes
-- Only 5 captures matter, rest is wasted work
+**Before (filter mode - legacy):**
+- Kometa queries `/library/sections/1/all` → proxy forwards to Plex
+- Plex returns 2000+ items as XML (large response)
+- Proxy filters down to 5 items → still transfers huge response
+- Network overhead scales with library size
 
-**After (with filtering proxy):**
-- Kometa queries `/library/sections/1/all` → receives only 5 items
-- Processes only those 5 items → completes in seconds
-- All work directly produces useful preview output
+**After (mock library mode - default):**
+- Kometa queries `/library/sections/1/all` → proxy returns synthetic XML
+- Synthetic XML contains only 5 preview items (tiny response)
+- No request to real Plex for listing endpoints
+- Constant performance regardless of library size
 
-## Safety Architecture (Filtering Proxy + Write Blocking + Upload Capture)
+## Mock Library Mode vs Filter Mode
+
+| Aspect | Mock Library Mode (default) | Filter Mode (legacy) |
+|--------|----------------------------|---------------------|
+| Listing endpoints | Return synthetic XML | Forward + filter response |
+| Network to Plex | Only metadata requests | All listing + metadata |
+| Performance | Constant (5 items) | Scales with library size |
+| Env variable | `PREVIEW_MOCK_LIBRARY=1` | `PREVIEW_MOCK_LIBRARY=0` |
+| Parent learning | Dynamic from metadata | Not applicable |
+
+## Safety Architecture (Mock Library Mode + Write Blocking + Upload Capture)
 
 ```
 ┌─────────────────────────────────────────────────────────────────────┐
@@ -33,11 +47,13 @@ hundreds or thousands of items, even though we only want to preview 5.
 │  ┌──────────────────────────────────────────────────────────────┐   │
 │  │              preview_entrypoint.py                            │   │
 │  │                                                               │   │
-│  │  1. Load preview.yml → extract allowed ratingKeys (5 items)  │   │
+│  │  1. Load preview.yml → extract preview targets (5 items)     │   │
 │  │                                                               │   │
-│  │  2. Start PlexProxy on 127.0.0.1:32500                       │   │
-│  │     - FILTER library listings to only allowed ratingKeys     │   │
-│  │     - BLOCK metadata requests for non-allowed ratingKeys     │   │
+│  │  2. Start PlexProxy on 127.0.0.1:32500 (Mock Library Mode)   │   │
+│  │     - MOCK listing endpoints → return synthetic XML          │   │
+│  │     - NO forwarding of listing requests to real Plex         │   │
+│  │     - FORWARD metadata only for allowed ratingKeys           │   │
+│  │     - LEARN parent relationships from forwarded metadata     │   │
 │  │     - BLOCK all writes → return 200, CAPTURE image bytes     │   │
 │  │     - Save to: output/by_ratingkey/<ratingKey>_poster.jpg    │   │
 │  │                                                               │   │
@@ -57,21 +73,24 @@ hundreds or thousands of items, even though we only want to preview 5.
 │                              │                                       │
 │                              ▼                                       │
 │  ┌──────────────────────────────────────────────────────────────┐   │
-│  │          PlexProxy (127.0.0.1:32500) - FILTERING             │   │
+│  │       PlexProxy (127.0.0.1:32500) - MOCK LIBRARY MODE        │   │
+│  │                                                               │   │
+│  │   GET /library/sections                                      │   │
+│  │     └─► Return synthetic XML with Movies/TV Shows sections   │   │
+│  │         (NO request to real Plex)                            │   │
 │  │                                                               │   │
 │  │   GET /library/sections/1/all                                │   │
-│  │     │                                                         │   │
-│  │     ├─► Forward to real Plex                                 │   │
-│  │     ├─► Parse XML response (2000 items)                      │   │
-│  │     ├─► FILTER: keep only allowed ratingKeys (5 items)       │   │
-│  │     ├─► Update MediaContainer size=5                         │   │
-│  │     └─► Return filtered XML to Kometa                        │   │
+│  │     └─► Return synthetic XML with only 5 preview items       │   │
+│  │         (NO request to real Plex)                            │   │
 │  │                                                               │   │
-│  │   GET /library/metadata/12345  (allowed)                     │   │
-│  │     └─► Forward to real Plex → return response               │   │
+│  │   GET /library/metadata/12345  (allowed ratingKey)           │   │
+│  │     ├─► Forward to real Plex                                 │   │
+│  │     ├─► Cache response (learn parent relationships)          │   │
+│  │     └─► Return response to Kometa                            │   │
 │  │                                                               │   │
 │  │   GET /library/metadata/99999  (NOT allowed)                 │   │
 │  │     └─► Return empty <MediaContainer size="0"/>              │   │
+│  │         (NO request to real Plex)                            │   │
 │  │                                                               │   │
 │  │   PUT /library/metadata/12345/posters                        │   │
 │  │     │                                                         │   │
@@ -338,20 +357,27 @@ preview:
   },
   "missing_targets": [],
   "output_files": ["matrix_after.jpg", "dune_after.jpg", ...],
-  "filtering": {
+  "mock_mode": {
     "enabled": true,
-    "allowed_rating_keys": ["12345", "12346", "12347", "12348", "12349"],
-    "allowed_count": 5,
-    "filtered_requests": [
+    "mock_list_requests": [
       {
         "path": "/library/sections/1/all",
-        "method": "GET",
-        "original_bytes": 245678,
-        "filtered_bytes": 3456,
-        "timestamp": "2024-01-15T10:30:05Z"
+        "type": "listing",
+        "returned_items": 5,
+        "timestamp": "2024-01-15T10:30:02Z"
       }
     ],
-    "filtered_requests_count": 3
+    "mock_list_requests_count": 8,
+    "forward_requests_count": 15,
+    "blocked_metadata_count": 3,
+    "learned_parent_keys": ["12340", "12341"]
+  },
+  "filtering": {
+    "enabled": false,
+    "allowed_rating_keys": ["12345", "12346", "12347", "12348", "12349"],
+    "allowed_count": 5,
+    "filtered_requests": [],
+    "filtered_requests_count": 0
   }
 }
 ```
@@ -388,11 +414,27 @@ To verify no writes occurred:
 
 ## Logging
 
-### Filtering Logs
+### Mock Library Mode Logs (Default)
 ```
-| INFO     | FILTERING ENABLED: Only 5 items allowed
+| INFO     | MOCK_LIBRARY_MODE ENABLED: Only 5 items visible
+| INFO     | Listing endpoints will NOT be forwarded to Plex
+| INFO     | Metadata requests forwarded only for allowed ratingKeys
 | INFO     | Allowed ratingKeys: ['12345', '12346', '12347', '12348', '12349']
-| INFO     | FILTER_LIST endpoint=/library/sections/1/all original_bytes=245678 filtered_bytes=3456 allowed=5
+| INFO     | MOCK_SECTIONS returned_sections=2
+| INFO     | MOCK_LIST endpoint=/library/sections/1/all returned_items=5
+| INFO     | ALLOW_FORWARD ratingKey=12345 endpoint=/library/metadata/12345
+| INFO     | LEARNED_PARENT ratingKey=12346 parentRatingKey=12345
+| INFO     | BLOCK_METADATA ratingKey=99999 not in allowlist
+| INFO     | Mock list requests: 8
+| INFO     | Forwarded requests: 15
+| INFO     | Blocked metadata requests: 3
+```
+
+### Filtering Logs (Legacy - when PREVIEW_MOCK_LIBRARY=0)
+```
+| INFO     | FILTER_MODE ENABLED: Only 5 items allowed
+| INFO     | Allowed ratingKeys: ['12345', '12346', '12347', '12348', '12349']
+| INFO     | FILTER_LIST endpoint=/library/sections/1/all items_before=2000 items_after=5 allowed_keys=5
 | INFO     | FILTER_XML items: before=2000 after=5 removed=1995 allowed=5
 | INFO     | BLOCK_METADATA ratingKey=99999 not in allowlist
 | INFO     | Filtered 15 listing requests

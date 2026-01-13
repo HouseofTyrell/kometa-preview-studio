@@ -6,7 +6,8 @@ A local-only web application for previewing Kometa overlays exactly as Kometa wo
 
 - **Pixel-identical preview**: Uses Kometa's actual overlay rendering code for pixel-perfect results
 - **Safe by design**: Preview mode cannot modify Plex metadata — all writes blocked by proxy (read-only network access)
-- **Fast preview**: Filtering proxy exposes only 5 preview items to Kometa, not your entire library
+- **Mock library mode**: Proxy returns synthetic XML for listing endpoints (no forwarding to Plex), ensuring constant performance regardless of library size
+- **Fast preview**: Only 5 preview items visible to Kometa, not your entire library
 - **Multiple artwork sources**: Supports asset directories, Original Posters backups, and Plex current artwork
 - **Real-time logs**: Live streaming of render progress via Server-Sent Events
 - **Before/After comparison**: Toggle between original and overlayed images
@@ -227,27 +228,29 @@ The preview renderer is based on the official Kometa Docker image (`kometateam/k
 
 4. **Future compatibility**: As Kometa's overlay system evolves, updates to the pinned version will automatically incorporate improvements.
 
-### Preview Renderer Architecture (Filtering Proxy + Write Blocking)
+### Preview Renderer Architecture (Mock Library Mode + Write Blocking)
 
 The preview renderer runs **real Kometa** with a **local HTTP proxy** that:
-1. **Filters** library listings to only show the 5 preview items
+1. **Returns synthetic XML** for listing endpoints (no forwarding to Plex)
 2. **Blocks** all writes to Plex (captures uploaded images instead)
+3. **Forwards** metadata requests only for allowed ratingKeys
 
 ```
 ┌──────────────────────────────────────────────────────────────┐
 │                     preview_entrypoint.py                     │
 ├──────────────────────────────────────────────────────────────┤
-│  1. Load preview.yml → extract allowed ratingKeys (5 items)  │
+│  1. Load preview.yml → extract preview targets (5 items)     │
 │                                                               │
-│  2. Start PlexProxy on 127.0.0.1:32500                       │
-│     - FILTER library listings → only 5 items visible         │
-│     - Forward allowed GET/HEAD requests to real Plex         │
+│  2. Start PlexProxy on 127.0.0.1:32500 (Mock Library Mode)   │
+│     - MOCK listing endpoints → return synthetic XML          │
+│     - NO forwarding of listing requests to real Plex         │
+│     - Forward metadata only for allowed ratingKeys           │
 │     - Block PUT/POST/PATCH/DELETE → return 200 OK            │
 │     - CAPTURE uploaded images for output                     │
 │                                                               │
 │  3. Generate kometa_run.yml                                  │
 │     - plex.url = proxy URL (not real Plex!)                  │
-│     - All Plex traffic routes through filtering proxy        │
+│     - All Plex traffic routes through mock proxy             │
 │                                                               │
 │  4. Run Kometa subprocess                                    │
 │     - Kometa sees only 5 items → processes only those        │
@@ -257,7 +260,7 @@ The preview renderer runs **real Kometa** with a **local HTTP proxy** that:
 └──────────────────────────────────────────────────────────────┘
 ```
 
-**Why filtering?** Without filtering, Kometa would process your entire library (thousands of items) just to preview 5. The filtering proxy makes previews complete in seconds instead of minutes.
+**Why mock library mode?** Without it, the proxy would forward listing requests to real Plex and filter the response afterward. For large libraries (2000+ items), this means transferring huge XML responses. Mock mode returns synthetic XML with only 5 items, ensuring constant performance regardless of library size.
 
 **Why proxy instead of monkeypatching?** Monkeypatches don't work across process boundaries. The proxy runs in the main process and intercepts all HTTP traffic from the Kometa subprocess.
 
