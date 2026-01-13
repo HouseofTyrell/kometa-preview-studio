@@ -15,6 +15,12 @@ export interface ResolvedTarget extends PreviewTarget {
   actualTitle: string;
   thumbPath: string;
   warnings: string[];
+  // Parent relationship fields for mock library mode
+  parentRatingKey?: string;
+  grandparentRatingKey?: string;
+  // Index fields for seasons/episodes
+  index?: number;
+  parentIndex?: number;
 }
 
 /**
@@ -118,6 +124,10 @@ async function resolveTarget(
   let ratingKey = '';
   let actualTitle = '';
   let thumbPath = '';
+  let parentRatingKey: string | undefined;
+  let grandparentRatingKey: string | undefined;
+  let index: number | undefined;
+  let parentIndex: number | undefined;
 
   try {
     switch (target.type) {
@@ -175,6 +185,8 @@ async function resolveTarget(
             ratingKey = season.ratingKey;
             actualTitle = `${show.title} - ${season.title}`;
             thumbPath = season.thumb || '';
+            parentRatingKey = show.ratingKey;
+            index = target.seasonIndex;
           }
         }
         break;
@@ -213,6 +225,10 @@ async function resolveTarget(
                 target.episodeIndex
               ).padStart(2, '0')} - ${episode.title}`;
               thumbPath = episode.thumb || '';
+              parentRatingKey = season.ratingKey;
+              grandparentRatingKey = show.ratingKey;
+              index = target.episodeIndex;
+              parentIndex = target.seasonIndex;
             }
           }
         }
@@ -230,6 +246,10 @@ async function resolveTarget(
     actualTitle: actualTitle || target.label,
     thumbPath,
     warnings,
+    parentRatingKey,
+    grandparentRatingKey,
+    index,
+    parentIndex,
   };
 }
 

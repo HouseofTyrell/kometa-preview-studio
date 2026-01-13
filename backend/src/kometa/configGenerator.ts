@@ -145,16 +145,34 @@ function buildKometaConfig(
 
   // Add preview metadata section (used by the renderer)
   // IMPORTANT: ratingKey is required for deterministic output mapping
+  // Parent ratingKeys are required for mock library mode to return synthetic children
   config.preview = {
     mode: 'write_blocked',
-    targets: targets.map((t) => ({
-      id: t.id,
-      type: t.type,
-      title: t.actualTitle,
-      ratingKey: t.ratingKey,  // Required for mapping captured uploads to targets
-      input: targetMapping[t.id]?.inputPath,
-      output: targetMapping[t.id]?.outputPath,
-    })),
+    targets: targets.map((t) => {
+      const target: Record<string, unknown> = {
+        id: t.id,
+        type: t.type,
+        title: t.actualTitle,
+        ratingKey: t.ratingKey,  // Required for mapping captured uploads to targets
+        input: targetMapping[t.id]?.inputPath,
+        output: targetMapping[t.id]?.outputPath,
+      };
+      // Include parent relationships for mock library mode
+      if (t.parentRatingKey) {
+        target.parentRatingKey = t.parentRatingKey;
+      }
+      if (t.grandparentRatingKey) {
+        target.grandparentRatingKey = t.grandparentRatingKey;
+      }
+      // Include index fields for seasons/episodes
+      if (t.index !== undefined) {
+        target.index = t.index;
+      }
+      if (t.parentIndex !== undefined) {
+        target.parentIndex = t.parentIndex;
+      }
+      return target;
+    }),
   };
 
   return config;
