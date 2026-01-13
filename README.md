@@ -189,38 +189,41 @@ The preview renderer is based on the official Kometa Docker image (`kometateam/k
 
 4. **Future compatibility**: As Kometa's overlay system evolves, updates to the pinned version will automatically incorporate improvements.
 
-### Preview Renderer Architecture (Path A)
+### Preview Renderer Architecture (Proxy-Based Write Blocking)
 
-The preview renderer runs **real Kometa** with write blocking to produce pixel-identical outputs:
+The preview renderer runs **real Kometa** with a **local HTTP proxy** that blocks all writes to Plex:
 
 ```
 ┌──────────────────────────────────────────────────────────────┐
 │                     preview_entrypoint.py                     │
 ├──────────────────────────────────────────────────────────────┤
-│  1. Install PlexWriteBlocker (monkeypatch requests)          │
-│     - Block PUT/POST/DELETE/PATCH to Plex URL                │
+│  1. Start PlexProxy on 127.0.0.1:32500                       │
+│     - Forward GET/HEAD requests to real Plex                 │
+│     - Block PUT/POST/PATCH/DELETE → return 200 OK            │
 │     - Log all blocked write attempts                         │
 │                                                               │
-│  2. Install OverlayOutputCapture                             │
-│     - Patch upload_poster() to copy files instead            │
-│     - Save rendered images to /jobs/<id>/output/             │
+│  2. Generate kometa_run.yml                                  │
+│     - plex.url = proxy URL (not real Plex!)                  │
+│     - All Plex traffic routes through proxy                  │
 │                                                               │
-│  3. Run real Kometa via subprocess                           │
-│     - Uses generated kometa_config.yml with Plex credentials │
+│  3. Run Kometa subprocess                                    │
+│     - Kometa connects to proxy, writes blocked at network    │
 │     - Streams stdout/stderr for SSE logging                  │
 │                                                               │
-│  4. Write summary.json with blocked attempts and outputs     │
+│  4. Export Kometa's rendered images to output/               │
 └──────────────────────────────────────────────────────────────┘
 ```
+
+**Why proxy instead of monkeypatching?** Monkeypatches don't work across process boundaries. The proxy runs in the main process and intercepts all HTTP traffic from the Kometa subprocess.
 
 **Key differences from normal Kometa:**
 
 | Feature | Normal Kometa | Preview Mode |
 |---------|--------------|--------------|
-| Plex connection | Read/Write | Read-only (writes blocked) |
-| Artwork source | Plex server | Local files + Plex read |
-| Metadata updates | Yes (labels, posters) | No (blocked) |
-| Network for Plex | Full access | GET requests only |
+| Plex connection | Direct | Via write-blocking proxy |
+| Plex writes | Allowed | Blocked at network layer |
+| Metadata updates | Yes (labels, posters) | No (returns fake 200) |
+| Output destination | Uploaded to Plex | Exported to local files |
 
 For more technical details, see [renderer/PREVIEW_MODE.md](renderer/PREVIEW_MODE.md).
 
