@@ -590,6 +590,17 @@ def generate_proxy_config(job_path: Path, preview_config: Dict[str, Any], proxy_
         'save_report': False,
     }
 
+    # Copy TMDb section - required for many overlay operations (ratings, etc.)
+    if 'tmdb' in preview_config:
+        kometa_config['tmdb'] = preview_config['tmdb']
+        logger.info("  Copied TMDb configuration")
+
+    # Copy other services that overlays may need
+    for service_key in ['tautulli', 'mdblist', 'trakt', 'radarr', 'sonarr', 'omdb', 'notifiarr', 'anidb', 'mal']:
+        if service_key in preview_config:
+            kometa_config[service_key] = preview_config[service_key]
+            logger.info(f"  Copied {service_key} configuration")
+
     # Copy libraries with overlay definitions
     if 'libraries' in preview_config:
         kometa_config['libraries'] = preview_config['libraries']
