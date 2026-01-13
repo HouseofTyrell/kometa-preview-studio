@@ -1,0 +1,48 @@
+version: '3.8'
+
+services:
+  backend:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    ports:
+      - "3001:3001"
+    environment:
+      - NODE_ENV=production
+      - PORT=3001
+      - HOST=0.0.0.0
+      - CORS_ORIGIN=http://localhost:5173
+      - JOBS_PATH=/app/jobs
+      - FONTS_PATH=/app/fonts
+      - KOMETA_IMAGE=python:3.11-slim
+      # Optional: Mount user assets
+      # - USER_ASSETS_PATH=/user_assets
+      # Optional: Mount user Kometa config for Original Posters
+      # - USER_KOMETA_CONFIG_PATH=/user_config
+    volumes:
+      - ./jobs:/app/jobs
+      - ./fonts:/app/fonts:ro
+      - /var/run/docker.sock:/var/run/docker.sock
+      # Optional: Uncomment and modify for your asset directory
+      # - /path/to/your/assets:/user_assets:ro
+      # Optional: Uncomment and modify for your Kometa config directory
+      # - /path/to/your/kometa/config:/user_config:ro
+    restart: unless-stopped
+    networks:
+      - kometa-preview
+
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+    ports:
+      - "5173:80"
+    depends_on:
+      - backend
+    restart: unless-stopped
+    networks:
+      - kometa-preview
+
+networks:
+  kometa-preview:
+    driver: bridge
