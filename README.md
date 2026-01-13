@@ -6,6 +6,7 @@ A local-only web application for previewing Kometa overlays exactly as Kometa wo
 
 - **Pixel-identical preview**: Uses Kometa's actual overlay rendering code for pixel-perfect results
 - **Safe by design**: Preview mode cannot modify Plex metadata — all writes blocked by proxy (read-only network access)
+- **Fast preview**: Filtering proxy exposes only 5 preview items to Kometa, not your entire library
 - **Multiple artwork sources**: Supports asset directories, Original Posters backups, and Plex current artwork
 - **Real-time logs**: Live streaming of render progress via Server-Sent Events
 - **Before/After comparison**: Toggle between original and overlayed images
@@ -226,30 +227,37 @@ The preview renderer is based on the official Kometa Docker image (`kometateam/k
 
 4. **Future compatibility**: As Kometa's overlay system evolves, updates to the pinned version will automatically incorporate improvements.
 
-### Preview Renderer Architecture (Proxy-Based Write Blocking)
+### Preview Renderer Architecture (Filtering Proxy + Write Blocking)
 
-The preview renderer runs **real Kometa** with a **local HTTP proxy** that blocks all writes to Plex:
+The preview renderer runs **real Kometa** with a **local HTTP proxy** that:
+1. **Filters** library listings to only show the 5 preview items
+2. **Blocks** all writes to Plex (captures uploaded images instead)
 
 ```
 ┌──────────────────────────────────────────────────────────────┐
 │                     preview_entrypoint.py                     │
 ├──────────────────────────────────────────────────────────────┤
-│  1. Start PlexProxy on 127.0.0.1:32500                       │
-│     - Forward GET/HEAD requests to real Plex                 │
+│  1. Load preview.yml → extract allowed ratingKeys (5 items)  │
+│                                                               │
+│  2. Start PlexProxy on 127.0.0.1:32500                       │
+│     - FILTER library listings → only 5 items visible         │
+│     - Forward allowed GET/HEAD requests to real Plex         │
 │     - Block PUT/POST/PATCH/DELETE → return 200 OK            │
-│     - Log all blocked write attempts                         │
+│     - CAPTURE uploaded images for output                     │
 │                                                               │
-│  2. Generate kometa_run.yml                                  │
+│  3. Generate kometa_run.yml                                  │
 │     - plex.url = proxy URL (not real Plex!)                  │
-│     - All Plex traffic routes through proxy                  │
+│     - All Plex traffic routes through filtering proxy        │
 │                                                               │
-│  3. Run Kometa subprocess                                    │
-│     - Kometa connects to proxy, writes blocked at network    │
-│     - Streams stdout/stderr for SSE logging                  │
+│  4. Run Kometa subprocess                                    │
+│     - Kometa sees only 5 items → processes only those        │
+│     - Writes blocked at network, images captured             │
 │                                                               │
-│  4. Export Kometa's rendered images to output/               │
+│  5. Export captured images to output/                        │
 └──────────────────────────────────────────────────────────────┘
 ```
+
+**Why filtering?** Without filtering, Kometa would process your entire library (thousands of items) just to preview 5. The filtering proxy makes previews complete in seconds instead of minutes.
 
 **Why proxy instead of monkeypatching?** Monkeypatches don't work across process boundaries. The proxy runs in the main process and intercepts all HTTP traffic from the Kometa subprocess.
 
@@ -257,7 +265,8 @@ The preview renderer runs **real Kometa** with a **local HTTP proxy** that block
 
 | Feature | Normal Kometa | Preview Mode |
 |---------|--------------|--------------|
-| Plex connection | Direct | Via write-blocking proxy |
+| Plex connection | Direct | Via filtering proxy |
+| Library scope | Entire library | Only 5 preview items |
 | Plex writes | Allowed | Blocked at network layer |
 | Metadata updates | Yes (labels, posters) | No (returns fake 200) |
 | Output destination | Uploaded to Plex | Exported to local files |

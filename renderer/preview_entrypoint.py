@@ -34,13 +34,14 @@ import subprocess
 import sys
 import threading
 import traceback
+import xml.etree.ElementTree as ET
 from datetime import datetime
 from email.parser import BytesParser
 from email.policy import default as email_policy
 from http.server import HTTPServer, BaseHTTPRequestHandler
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Tuple
-from urllib.parse import urlparse
+from typing import Any, Dict, List, Optional, Set, Tuple
+from urllib.parse import urlparse, parse_qs, urlsplit
 import http.client
 import ssl
 
@@ -61,6 +62,199 @@ PROXY_HOST = '127.0.0.1'
 PLEX_UPLOAD_PATTERN = re.compile(
     r'^/library/metadata/(\d+)/(posters?|arts?|thumbs?)(?:\?.*)?$'
 )
+
+# Library listing endpoint patterns (endpoints that return lists of items)
+# These are filtered to only include allowed ratingKeys
+LIBRARY_LISTING_PATTERNS = [
+    re.compile(r'^/library/sections/(\d+)/all(?:\?.*)?$'),       # All items in section
+    re.compile(r'^/library/sections/(\d+)/search(?:\?.*)?$'),    # Search in section
+    re.compile(r'^/library/search(?:\?.*)?$'),                    # Global library search
+    re.compile(r'^/hubs/search(?:\?.*)?$'),                       # Hub search
+    re.compile(r'^/library/sections/(\d+)/firstCharacter(?:\?.*)?$'),  # First character browse
+    re.compile(r'^/library/sections/(\d+)/genre(?:\?.*)?$'),      # Genre browse
+    re.compile(r'^/library/sections/(\d+)/year(?:\?.*)?$'),       # Year browse
+    re.compile(r'^/library/sections/(\d+)/decade(?:\?.*)?$'),     # Decade browse
+    re.compile(r'^/library/sections/(\d+)/rating(?:\?.*)?$'),     # Rating browse
+    re.compile(r'^/library/sections/(\d+)/collection(?:\?.*)?$'), # Collection browse
+    re.compile(r'^/library/sections/(\d+)/recentlyAdded(?:\?.*)?$'),  # Recently added
+    re.compile(r'^/library/sections/(\d+)/newest(?:\?.*)?$'),     # Newest items
+    re.compile(r'^/library/sections/(\d+)/onDeck(?:\?.*)?$'),     # On deck
+    re.compile(r'^/library/sections/(\d+)/unwatched(?:\?.*)?$'),  # Unwatched
+]
+
+# Metadata endpoint pattern - to block access to non-allowed items
+METADATA_PATTERN = re.compile(r'^/library/metadata/(\d+)(?:/.*)?(?:\?.*)?$')
+
+# Artwork/photo endpoint patterns
+ARTWORK_PATTERNS = [
+    re.compile(r'^/library/metadata/(\d+)/(thumb|art|poster|banner|background)(?:/.*)?(?:\?.*)?$'),
+    re.compile(r'^/photo/:/transcode\?.*url=.*metadata%2F(\d+)'),  # Transcoded photos
+]
+
+
+# ============================================================================
+# XML Filtering Helpers (Unit-Testable)
+# ============================================================================
+
+def filter_media_container_xml(xml_bytes: bytes, allowed_rating_keys: Set[str]) -> bytes:
+    """
+    Filter a Plex MediaContainer XML response to only include items with allowed ratingKeys.
+
+    This is the core filtering function that:
+    1. Parses the XML response
+    2. Removes child elements (Video, Directory, etc.) not in allowed_rating_keys
+    3. Updates the MediaContainer's size/totalSize attributes
+    4. Returns the filtered XML
+
+    Args:
+        xml_bytes: Raw XML response from Plex
+        allowed_rating_keys: Set of ratingKey strings that are allowed through
+
+    Returns:
+        Filtered XML bytes with same structure but only allowed items
+    """
+    try:
+        # Parse XML
+        root = ET.fromstring(xml_bytes)
+
+        # Track counts for logging
+        original_count = 0
+        filtered_count = 0
+
+        # Find all child elements that have ratingKey attribute
+        # Common element types: Video, Directory, Track, Photo, Episode, Season, Show
+        children_to_remove = []
+
+        for child in root:
+            # Check if this element has a ratingKey
+            rating_key = child.get('ratingKey')
+            if rating_key is not None:
+                original_count += 1
+                if rating_key not in allowed_rating_keys:
+                    children_to_remove.append(child)
+                else:
+                    filtered_count += 1
+
+        # Remove non-allowed children
+        for child in children_to_remove:
+            root.remove(child)
+
+        # Update MediaContainer attributes
+        if root.tag == 'MediaContainer':
+            # Update size to reflect filtered count
+            root.set('size', str(filtered_count))
+
+            # If totalSize exists, update it too (for paginated responses)
+            if 'totalSize' in root.attrib:
+                root.set('totalSize', str(filtered_count))
+
+            # Reset offset if present (we're returning all filtered items)
+            if 'offset' in root.attrib:
+                root.set('offset', '0')
+
+        # Log the filtering
+        removed_count = original_count - filtered_count
+        if removed_count > 0:
+            logger.info(
+                f"FILTER_XML items: before={original_count} after={filtered_count} "
+                f"removed={removed_count} allowed={len(allowed_rating_keys)}"
+            )
+
+        # Return as bytes with XML declaration
+        return ET.tostring(root, encoding='unicode').encode('utf-8')
+
+    except ET.ParseError as e:
+        logger.warning(f"XML_PARSE_ERROR: {e} - passing through unchanged")
+        return xml_bytes
+    except Exception as e:
+        logger.warning(f"FILTER_ERROR: {e} - passing through unchanged")
+        return xml_bytes
+
+
+def create_empty_media_container_xml() -> bytes:
+    """
+    Create an empty MediaContainer XML response.
+
+    Used when blocking access to metadata for non-allowed items.
+    """
+    return b'<?xml version="1.0" encoding="UTF-8"?>\n<MediaContainer size="0"></MediaContainer>'
+
+
+def is_listing_endpoint(path: str) -> bool:
+    """
+    Check if a path is a library listing endpoint that should be filtered.
+
+    Args:
+        path: Request path (may include query string)
+
+    Returns:
+        True if this endpoint returns a list of items that should be filtered
+    """
+    # Check against all listing patterns
+    for pattern in LIBRARY_LISTING_PATTERNS:
+        if pattern.match(path):
+            return True
+    return False
+
+
+def extract_rating_key_from_path(path: str) -> Optional[str]:
+    """
+    Extract ratingKey from a metadata or artwork path.
+
+    Args:
+        path: Request path
+
+    Returns:
+        ratingKey string or None if not found
+    """
+    # Try metadata pattern first
+    match = METADATA_PATTERN.match(path)
+    if match:
+        return match.group(1)
+
+    # Try artwork patterns
+    for pattern in ARTWORK_PATTERNS:
+        match = pattern.search(path)
+        if match:
+            return match.group(1)
+
+    return None
+
+
+def is_metadata_endpoint(path: str) -> bool:
+    """Check if path is a metadata endpoint (not upload)."""
+    # Must match metadata pattern but NOT upload pattern
+    if PLEX_UPLOAD_PATTERN.match(path.split('?')[0]):
+        return False
+    return METADATA_PATTERN.match(path) is not None
+
+
+def extract_allowed_rating_keys(preview_config: Dict[str, Any]) -> Set[str]:
+    """
+    Extract the set of allowed ratingKeys from preview configuration.
+
+    Args:
+        preview_config: Loaded preview.yml configuration
+
+    Returns:
+        Set of ratingKey strings that are allowed through the proxy
+    """
+    allowed = set()
+
+    preview_data = preview_config.get('preview', {})
+    targets = preview_data.get('targets', [])
+
+    for target in targets:
+        # Support multiple key names for ratingKey
+        rating_key = (
+            target.get('ratingKey') or
+            target.get('rating_key') or
+            target.get('plex_id')
+        )
+        if rating_key:
+            allowed.add(str(rating_key))
+
+    return allowed
 
 
 # ============================================================================
@@ -84,9 +278,14 @@ class PlexProxyHandler(BaseHTTPRequestHandler):
     plex_token: str = ''
     job_path: str = ''
 
+    # Filtering configuration (set from preview config)
+    allowed_rating_keys: Set[str] = set()
+    filtering_enabled: bool = False
+
     # Captured data
     blocked_requests: List[Dict[str, str]] = []
     captured_uploads: List[Dict[str, Any]] = []
+    filtered_requests: List[Dict[str, Any]] = []  # Track filtered listing requests
     data_lock = threading.Lock()
 
     def log_message(self, format, *args):
@@ -118,9 +317,30 @@ class PlexProxyHandler(BaseHTTPRequestHandler):
         self._block_request('DELETE')
 
     def _forward_request(self, method: str):
-        """Forward a read request to the real Plex server"""
+        """Forward a read request to the real Plex server, with optional filtering"""
         try:
             path = self.path
+
+            # Check if filtering is enabled and this is a filtered endpoint type
+            should_filter_listing = (
+                self.filtering_enabled and
+                self.allowed_rating_keys and
+                is_listing_endpoint(path)
+            )
+
+            should_block_metadata = (
+                self.filtering_enabled and
+                self.allowed_rating_keys and
+                is_metadata_endpoint(path)
+            )
+
+            # If this is a metadata endpoint for a non-allowed item, block it
+            if should_block_metadata:
+                rating_key = extract_rating_key_from_path(path)
+                if rating_key and rating_key not in self.allowed_rating_keys:
+                    logger.info(f"BLOCK_METADATA ratingKey={rating_key} not in allowlist")
+                    self._send_empty_container()
+                    return
 
             # Create connection to real Plex
             if self.real_plex_scheme == 'https':
@@ -153,23 +373,66 @@ class PlexProxyHandler(BaseHTTPRequestHandler):
             conn.request(method, path, headers=headers)
             response = conn.getresponse()
 
-            self.send_response(response.status)
-            for key, value in response.getheaders():
-                if key.lower() not in ('transfer-encoding', 'connection'):
-                    self.send_header(key, value)
-            self.end_headers()
+            # Read full response body for potential filtering
+            response_body = response.read()
 
-            while True:
-                chunk = response.read(8192)
-                if not chunk:
-                    break
-                self.wfile.write(chunk)
+            # Filter listing responses if enabled
+            if should_filter_listing and response.status == 200:
+                content_type = response.getheader('Content-Type', '')
+
+                # Only filter XML responses
+                if 'xml' in content_type.lower() or response_body.strip().startswith(b'<'):
+                    original_size = len(response_body)
+                    filtered_body = filter_media_container_xml(
+                        response_body, self.allowed_rating_keys
+                    )
+
+                    # Log the filtering
+                    logger.info(
+                        f"FILTER_LIST endpoint={path.split('?')[0]} "
+                        f"original_bytes={original_size} filtered_bytes={len(filtered_body)} "
+                        f"allowed={len(self.allowed_rating_keys)}"
+                    )
+
+                    # Track filtered request
+                    with self.data_lock:
+                        self.filtered_requests.append({
+                            'path': path,
+                            'method': method,
+                            'original_bytes': original_size,
+                            'filtered_bytes': len(filtered_body),
+                            'timestamp': datetime.now().isoformat()
+                        })
+
+                    response_body = filtered_body
+
+            # Send response
+            self.send_response(response.status)
+
+            # Copy headers but update Content-Length for filtered responses
+            for key, value in response.getheaders():
+                if key.lower() == 'content-length':
+                    self.send_header('Content-Length', str(len(response_body)))
+                elif key.lower() not in ('transfer-encoding', 'connection'):
+                    self.send_header(key, value)
+
+            self.end_headers()
+            self.wfile.write(response_body)
 
             conn.close()
 
         except Exception as e:
             logger.error(f"PROXY ERROR forwarding {method} {self.path}: {e}")
             self.send_error(502, f"Proxy error: {e}")
+
+    def _send_empty_container(self):
+        """Send an empty MediaContainer response (used for blocked metadata)"""
+        response_body = create_empty_media_container_xml()
+        self.send_response(200)
+        self.send_header('Content-Type', 'text/xml; charset=utf-8')
+        self.send_header('Content-Length', str(len(response_body)))
+        self.end_headers()
+        self.wfile.write(response_body)
 
     def _block_request(self, method: str):
         """Block a write request without capturing (for DELETE/PATCH)"""
@@ -465,13 +728,26 @@ class PlexProxyHandler(BaseHTTPRequestHandler):
 
 class PlexProxy:
     """
-    Manages the Plex write-blocking proxy server with upload capture.
+    Manages the Plex write-blocking proxy server with upload capture and optional filtering.
+
+    Filtering Mode:
+    - When allowed_rating_keys is provided, the proxy filters library listing endpoints
+      to only include items with those ratingKeys
+    - Metadata endpoints for non-allowed ratingKeys return empty containers
+    - This dramatically reduces Kometa's processing scope (e.g., 5 items vs 2000+)
     """
 
-    def __init__(self, real_plex_url: str, plex_token: str, job_path: Path):
+    def __init__(
+        self,
+        real_plex_url: str,
+        plex_token: str,
+        job_path: Path,
+        allowed_rating_keys: Optional[Set[str]] = None
+    ):
         self.real_plex_url = real_plex_url.rstrip('/')
         self.plex_token = plex_token
         self.job_path = job_path
+        self.allowed_rating_keys = allowed_rating_keys or set()
 
         # Parse the real Plex URL
         parsed = urlparse(real_plex_url)
@@ -491,11 +767,21 @@ class PlexProxy:
         PlexProxyHandler.job_path = str(job_path)
         PlexProxyHandler.blocked_requests = []
         PlexProxyHandler.captured_uploads = []
+        PlexProxyHandler.filtered_requests = []
+
+        # Configure filtering
+        PlexProxyHandler.allowed_rating_keys = self.allowed_rating_keys
+        PlexProxyHandler.filtering_enabled = len(self.allowed_rating_keys) > 0
 
     @property
     def proxy_url(self) -> str:
         """URL that Kometa should connect to"""
         return f"http://{PROXY_HOST}:{PROXY_PORT}"
+
+    @property
+    def filtering_enabled(self) -> bool:
+        """Whether filtering is active"""
+        return len(self.allowed_rating_keys) > 0
 
     def start(self):
         """Start the proxy server in a background thread"""
@@ -506,6 +792,13 @@ class PlexProxy:
         logger.info(f"  Forwarding reads to: {self.real_plex_url}")
         logger.info(f"  Blocking and capturing writes")
         logger.info(f"  Captures saved to: {self.job_path}/output/by_ratingkey/")
+
+        # Log filtering status
+        if self.filtering_enabled:
+            logger.info(f"  FILTERING ENABLED: Only {len(self.allowed_rating_keys)} items allowed")
+            logger.info(f"  Allowed ratingKeys: {sorted(self.allowed_rating_keys)}")
+        else:
+            logger.warning(f"  FILTERING DISABLED: All items will be processed")
 
     def stop(self):
         """Stop the proxy server"""
@@ -522,6 +815,11 @@ class PlexProxy:
         """Return list of captured upload records"""
         with PlexProxyHandler.data_lock:
             return PlexProxyHandler.captured_uploads.copy()
+
+    def get_filtered_requests(self) -> List[Dict[str, Any]]:
+        """Return list of filtered listing requests"""
+        with PlexProxyHandler.data_lock:
+            return PlexProxyHandler.filtered_requests.copy()
 
 
 # ============================================================================
@@ -870,6 +1168,9 @@ def main():
 
     logger.info(f"Real Plex URL: {real_plex_url}")
 
+    # Extract allowed ratingKeys for filtering
+    allowed_rating_keys = extract_allowed_rating_keys(preview_config)
+
     # Log target ratingKeys for debugging
     preview_data = preview_config.get('preview', {})
     targets = preview_data.get('targets', [])
@@ -878,8 +1179,14 @@ def main():
         rk = t.get('ratingKey') or t.get('rating_key') or 'MISSING'
         logger.info(f"  - {t.get('id')}: ratingKey={rk}")
 
-    # Start the write-blocking proxy with capture
-    proxy = PlexProxy(real_plex_url, plex_token, job_path)
+    if not allowed_rating_keys:
+        logger.warning("No ratingKeys found in preview targets - filtering will be DISABLED")
+        logger.warning("Kometa will process ALL library items (may be slow)")
+    else:
+        logger.info(f"Filtering proxy will only expose {len(allowed_rating_keys)} items to Kometa")
+
+    # Start the write-blocking proxy with capture AND filtering
+    proxy = PlexProxy(real_plex_url, plex_token, job_path, allowed_rating_keys)
 
     try:
         proxy.start()
@@ -901,9 +1208,11 @@ def main():
         # Get captured data
         blocked_requests = proxy.get_blocked_requests()
         captured_uploads = proxy.get_captured_uploads()
+        filtered_requests = proxy.get_filtered_requests()
 
         logger.info(f"Blocked {len(blocked_requests)} write attempts")
         logger.info(f"Captured {len(captured_uploads)} uploads")
+        logger.info(f"Filtered {len(filtered_requests)} listing requests")
 
         # Log capture summary
         successful_captures = [u for u in captured_uploads if u.get('saved_path')]
@@ -936,6 +1245,14 @@ def main():
             'exported_files': exported_files,
             'missing_targets': missing_targets,
             'output_files': [f.name for f in output_dir.glob('*_after.*')],
+            # Filtering statistics
+            'filtering': {
+                'enabled': proxy.filtering_enabled,
+                'allowed_rating_keys': sorted(allowed_rating_keys) if allowed_rating_keys else [],
+                'allowed_count': len(allowed_rating_keys),
+                'filtered_requests': filtered_requests,
+                'filtered_requests_count': len(filtered_requests),
+            },
         }
 
         summary_path = output_dir / 'summary.json'
