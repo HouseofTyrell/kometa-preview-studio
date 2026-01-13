@@ -2,20 +2,22 @@
 
 ## Overview
 
-The preview renderer is a specialized component that uses Kometa's internal overlay rendering pipeline to generate preview images **without** modifying Plex metadata or artwork.
+The preview renderer runs **real Kometa** inside the container with **write blocking**
+to produce pixel-identical overlay outputs without modifying Plex.
+
+This is the "Path A" implementation: run Kometa normally, intercept outputs.
 
 ## Key Differences from Normal Kometa Runs
 
 | Aspect | Normal Kometa Run | Preview Mode |
 |--------|-------------------|--------------|
-| Plex Connection | Required | Not used |
-| Artwork Source | Plex server | Local files |
-| Metadata Updates | Yes (labels, artwork) | No |
-| Output Destination | Plex server | Local files |
-| Network Required | Yes | No (isolated container) |
-| Item Resolution | Plex library scan | Pre-resolved targets |
+| Plex Connection | Read/Write | Read-only (writes blocked) |
+| Artwork Source | Plex server | Local files + Plex read |
+| Metadata Updates | Yes (labels, artwork) | No (blocked) |
+| Output Destination | Uploaded to Plex | Saved to local files |
+| Network for Plex | Full access | GET requests only |
 
-## Architecture
+## Architecture (Path A)
 
 ```
 ┌─────────────────────────────────────────────────────────────┐
@@ -24,199 +26,232 @@ The preview renderer is a specialized component that uses Kometa's internal over
 │  ┌──────────────────────────────────────────────────────┐   │
 │  │              preview_entrypoint.py                    │   │
 │  │                                                       │   │
-│  │  1. Load preview.yml config                          │   │
-│  │  2. Load item metadata from meta.json                │   │
-│  │  3. For each input image:                            │   │
-│  │     - Create MockItem with metadata                  │   │
-│  │     - Parse overlay definitions                      │   │
-│  │     - Apply overlays using Kometa-style rendering    │   │
-│  │     - Save to output directory                       │   │
-│  │  4. Write summary.json                               │   │
+│  │  1. Install PlexWriteBlocker (monkeypatch requests)  │   │
+│  │     - Block PUT/POST/DELETE/PATCH to Plex URL        │   │
+│  │     - Log all blocked attempts                        │   │
+│  │                                                       │   │
+│  │  2. Install OverlayOutputCapture                     │   │
+│  │     - Patch upload_poster() to copy files instead    │   │
+│  │     - Save outputs to /jobs/<id>/output/              │   │
+│  │                                                       │   │
+│  │  3. Run real Kometa via subprocess                   │   │
+│  │     - Uses generated kometa_config.yml               │   │
+│  │     - Streams stdout/stderr for SSE logging          │   │
+│  │                                                       │   │
+│  │  4. Write summary.json with results                  │   │
 │  └──────────────────────────────────────────────────────┘   │
 │                                                              │
 │  ┌──────────────────────────────────────────────────────┐   │
-│  │              kometa_bridge.py                         │   │
+│  │              Kometa (real execution)                  │   │
 │  │                                                       │   │
-│  │  - Wraps Kometa's Overlay class (when available)     │   │
-│  │  - Provides compatible fallback rendering            │   │
-│  │  - Handles text/image overlay creation               │   │
-│  │  - Manages positioning and color parsing             │   │
+│  │  - Connects to Plex (GET requests allowed)           │   │
+│  │  - Reads library metadata                            │   │
+│  │  - Applies overlays using real overlay pipeline      │   │
+│  │  - Attempts to upload (captured by our patches)      │   │
 │  └──────────────────────────────────────────────────────┘   │
 │                                                              │
 └─────────────────────────────────────────────────────────────┘
+```
+
+## Write Blocking Mechanism
+
+### PlexWriteBlocker
+
+Monkeypatches `requests.Session.request` to intercept all HTTP requests:
+
+```python
+# Pseudocode
+def blocked_request(session, method, url, **kwargs):
+    if url.startswith(plex_url) and method != 'GET':
+        log(f"BLOCKED: {method} {url}")
+        return fake_200_response()
+    return original_request(session, method, url, **kwargs)
+```
+
+**Blocked methods:**
+- `PUT` - artwork uploads
+- `POST` - metadata updates
+- `DELETE` - item removal
+- `PATCH` - partial updates
+
+**Allowed:**
+- `GET` - Kometa needs to read library/item metadata
+
+### OverlayOutputCapture
+
+Patches Kometa's upload methods to capture outputs:
+
+```python
+# Pseudocode
+def patched_upload_poster(library, item, image_path, url=False):
+    if image_path and os.path.exists(image_path):
+        # Copy to our output directory instead of uploading
+        output_path = output_dir / f"{item_id}_after.png"
+        shutil.copy2(image_path, output_path)
+        log(f"CAPTURED: {item.title} -> {output_path}")
+    # Don't actually upload
+    return None
 ```
 
 ## File Structure
 
 ```
 /jobs/<jobId>/
-├── input/                    # Base artwork images
-│   ├── matrix.jpg           # Movie poster
-│   ├── dune.jpg             # Movie poster
+├── input/                    # Base artwork images (from backend)
+│   ├── matrix.jpg
+│   ├── dune.jpg
 │   ├── breakingbad_series.jpg
 │   ├── breakingbad_s01.jpg
 │   └── breakingbad_s01e01.jpg
 │
 ├── config/
-│   └── preview.yml          # Generated preview config
+│   ├── preview.yml          # Generated preview config
+│   └── kometa_config.yml    # Generated Kometa config
 │
-├── output/                   # Rendered images with overlays
+├── output/                   # Captured overlay outputs
 │   ├── matrix_after.png
 │   ├── dune_after.png
 │   ├── breakingbad_series_after.png
 │   ├── breakingbad_s01_after.png
 │   ├── breakingbad_s01e01_after.png
-│   └── summary.json         # Rendering results
+│   └── summary.json
 │
 ├── logs/                     # Container logs
 │
-└── meta.json                 # Item metadata for rendering
+└── meta.json                 # Item metadata
 ```
 
-## Overlay Rendering Pipeline
+## Config Generation
 
-### 1. Configuration Loading
+The backend generates a **valid Kometa config** (not a custom format):
 
-The renderer loads `preview.yml` which contains:
-- Overlay definitions extracted from the user's Kometa config
-- Preview targets with input/output paths
-- Settings for the rendering session
+```yaml
+plex:
+  url: "http://your-plex:32400"
+  token: "your-token"
+  timeout: 60
+  clean_bundles: false
+  empty_trash: false
+  optimize: false
 
-### 2. Item Creation
+settings:
+  cache: false
+  run_order: ['overlays']  # Only run overlays
+  # ... other settings disabled
 
-For each input image, a `MockItem` is created that simulates a Plex item with:
-- Item type (movie, show, season, episode)
-- Title and year
-- Rating and content rating
-- Media info (resolution, audio codec, HDR status)
-- Season/episode numbers
+libraries:
+  Movies:
+    overlay_files:
+      - pmm: resolution
+      - pmm: audio_codec
+    operations: null      # Disabled
+    collections: null     # Disabled
+    metadata: null        # Disabled
 
-### 3. Overlay Application
+preview:
+  mode: 'write_blocked'
+  targets:
+    - id: matrix
+      type: movie
+      title: "The Matrix"
+    # ... other targets
+```
 
-Overlays are applied in order using Kometa-compatible rendering:
+## Kometa Execution
 
-1. **Text Overlays**
-   - Parse text template with variables (e.g., `<<resolution>>`)
-   - Resolve variables using item metadata
-   - Load font (Kometa's Roboto-Medium.ttf default)
-   - Create background rectangle (with optional rounded corners)
-   - Draw text with specified colors and styling
+The renderer runs Kometa as a subprocess:
 
-2. **Image Overlays**
-   - Load overlay image from file
-   - Apply scaling if specified
-   - Position according to alignment settings
+```bash
+python /kometa.py -r --config /jobs/<id>/config/kometa_config.yml
+```
 
-3. **Positioning**
-   - `horizontal_align`: left, center, right
-   - `vertical_align`: top, center, bottom
-   - `horizontal_offset` / `vertical_offset`: pixels or percentage
+Flags:
+- `-r` or `--run`: Run once (not scheduled mode)
+- `--config`: Path to config file
 
-### 4. Output Generation
+Output is streamed to stdout for SSE logging.
 
-- Images are composited using PIL's `alpha_composite`
-- Final images are saved as PNG for quality preservation
-- A summary.json is written with success/failure status
+## Fallback Rendering
 
-## Supported Overlay Features
+If Kometa execution fails (e.g., can't find kometa.py), the renderer
+falls back to basic PIL overlay application:
 
-### Text Variables
+1. Load input image
+2. Apply type-appropriate badge (resolution, rating, season, episode)
+3. Save to output directory
 
-| Variable | Description | Example |
-|----------|-------------|---------|
-| `<<resolution>>` | Video resolution | 4K, 1080p |
-| `<<audio_codec>>` | Audio codec | Atmos, DTS-HD |
-| `<<rating>>` | Audience rating | 9.5 |
-| `<<status>>` | Show status | COMPLETED |
-| `<<season>>` | Season number | S01 |
-| `<<episode>>` | Episode number | E01 |
-| `<<runtime>>` | Duration | 58 min |
-| `<<year>>` | Release year | 1999 |
-| `<<title>>` | Item title | The Matrix |
+This ensures previews are always generated, even if degraded.
 
-### Styling Options
+## Summary Output
 
-| Option | Type | Default | Description |
-|--------|------|---------|-------------|
-| `font` | string | Roboto-Medium.ttf | Font file name |
-| `font_size` | int | 55 | Font size in pixels |
-| `font_color` | hex | #FFFFFF | Text color |
-| `back_color` | hex | #1E1E1EDC | Background color (with alpha) |
-| `back_radius` | int | 0 | Corner radius for background |
-| `back_padding` | int | 10 | Padding around text |
-| `stroke_width` | int | 0 | Text stroke width |
-| `stroke_color` | hex | #000000 | Text stroke color |
+`/jobs/<id>/output/summary.json`:
 
-### Position Options
-
-| Option | Values | Default | Description |
-|--------|--------|---------|-------------|
-| `horizontal_align` | left, center, right | left | Horizontal alignment |
-| `vertical_align` | top, center, bottom | top | Vertical alignment |
-| `horizontal_offset` | int or "50%" | 30 | Horizontal offset |
-| `vertical_offset` | int or "50%" | 30 | Vertical offset |
-
-## Canvas Sizes
-
-Kometa uses standardized canvas dimensions:
-
-| Type | Dimensions | Aspect Ratio |
-|------|------------|--------------|
-| Poster (portrait) | 1000 × 1500 | 2:3 |
-| Background (landscape) | 1920 × 1080 | 16:9 |
-| Album art (square) | 1000 × 1000 | 1:1 |
-
-Input images are automatically resized to match these dimensions.
-
-## Font Resolution
-
-Fonts are resolved in this order:
-
-1. User fonts directory (`/fonts`)
-2. Kometa's bundled fonts (`/modules/fonts`)
-3. System fonts (`/usr/share/fonts`)
-4. Fallback: Roboto-Medium.ttf
+```json
+{
+  "timestamp": "2024-01-15T10:30:00Z",
+  "success": true,
+  "kometa_exit_code": 0,
+  "kometa_ran": true,
+  "blocked_write_attempts": [
+    {
+      "method": "PUT",
+      "url": "http://plex:32400/library/metadata/12345/posters",
+      "timestamp": "2024-01-15T10:30:15Z"
+    }
+  ],
+  "captured_outputs": [
+    {
+      "ratingKey": "12345",
+      "title": "The Matrix",
+      "source": "/config/overlays/temp.png",
+      "destination": "/jobs/.../output/matrix_after.png",
+      "timestamp": "2024-01-15T10:30:15Z"
+    }
+  ],
+  "output_files": [
+    "matrix_after.png",
+    "dune_after.png",
+    "breakingbad_series_after.png",
+    "breakingbad_s01_after.png",
+    "breakingbad_s01e01_after.png"
+  ]
+}
+```
 
 ## Safety Guarantees
 
-1. **No Plex Writes**: The renderer never connects to Plex or modifies any server data
-2. **Network Isolation**: Docker container runs with `NetworkMode: 'none'`
-3. **Read-Only Mounts**: User assets and config are mounted read-only
-4. **Local Only**: All I/O is through local filesystem
+1. **No Plex Writes**: All non-GET requests to Plex are blocked at the HTTP layer
+2. **Logged Attempts**: Every blocked write is logged for verification
+3. **Network Isolation**: Container runs with `NetworkMode: 'none'` for extra safety
+4. **Read-Only Mounts**: User assets and config are mounted read-only
+5. **Local Output Only**: Results saved to local filesystem, never uploaded
 
-## Error Handling
+## Pixel Identity
 
-The renderer:
-- Logs all operations to stdout/stderr
-- Continues processing on individual overlay failures
-- Generates summary.json with success/failure details
-- Preserves stack traces for debugging
-- Returns non-zero exit code on fatal errors
+Because we run Kometa's actual overlay pipeline:
+- Same overlay parsing and template resolution
+- Same font loading and text rendering
+- Same image composition and positioning
+- Same color handling and alpha blending
 
-## Extending the Renderer
-
-To add new overlay types or variables:
-
-1. Add variable resolution in `_resolve_text_variables()`
-2. Add default overlay definition in `_get_default_overlay_def()`
-3. Update MockItem to include required metadata fields
+The only difference is the final "upload to Plex" step is replaced with
+"copy to output directory".
 
 ## Debugging
+
+Check the summary.json for:
+- `kometa_ran`: Did Kometa execute?
+- `kometa_exit_code`: Did it succeed?
+- `blocked_write_attempts`: What writes were blocked?
+- `captured_outputs`: What files were captured?
+- `output_files`: What outputs were generated?
 
 Enable verbose logging:
 ```bash
 PYTHONUNBUFFERED=1 python3 preview_entrypoint.py --job /jobs/<id>
 ```
 
-Check summary.json for per-item results:
-```json
-{
-  "success": true,
-  "total": 5,
-  "succeeded": 5,
-  "failed": 0,
-  "results": [...],
-  "warnings": [],
-  "kometa_modules_used": true
-}
-```
+## Deprecated Files
+
+The following files are deprecated and not used in Path A:
+- `renderer/kometa_bridge.py` - Was for custom overlay rendering, now bypassed

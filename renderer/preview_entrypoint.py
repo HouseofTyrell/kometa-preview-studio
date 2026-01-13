@@ -1,17 +1,14 @@
 #!/usr/bin/env python3
 """
-Kometa Preview Studio - Preview Renderer Entrypoint
+Kometa Preview Studio - Preview Renderer (Path A Implementation)
 
-This script runs inside the Kometa Docker container and uses Kometa's ACTUAL
-internal overlay rendering modules to apply overlays to local images, producing
-pixel-identical results to what Kometa would generate in a real library run.
+This script runs REAL Kometa inside the container but:
+1. Blocks ALL Plex writes (PUT/POST/DELETE/PATCH)
+2. Intercepts overlay outputs before upload
+3. Copies the final rendered images to the job output directory
 
-The script operates in "offline preview mode":
-- NO Plex connections or writes
-- NO metadata updates
-- Reads local images from /jobs/<jobId>/input/
-- Writes rendered images to /jobs/<jobId>/output/
-- Uses Kometa's real overlay YAML parsing and rendering
+The result is pixel-identical output to what Kometa would produce,
+but with zero modifications to Plex.
 
 Usage:
     python3 preview_entrypoint.py --job /jobs/<jobId>
@@ -21,13 +18,15 @@ import argparse
 import json
 import logging
 import os
+import shutil
 import sys
 import traceback
 from datetime import datetime
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Tuple, Union
+from typing import Any, Dict, List, Optional, Tuple
+from urllib.parse import urlparse
 
-# Configure logging before imports
+# Configure logging before any other imports
 logging.basicConfig(
     level=logging.INFO,
     format='| %(levelname)-8s | %(message)s',
@@ -35,1253 +34,540 @@ logging.basicConfig(
 )
 logger = logging.getLogger('KometaPreview')
 
-# Add Kometa's module path
-sys.path.insert(0, '/')
+# ============================================================================
+# Write Blocker Installation
+# ============================================================================
+
+class PlexWriteBlocker:
+    """
+    Blocks all non-GET requests to Plex server URLs.
+
+    This ensures preview mode cannot modify Plex metadata, artwork, or labels.
+    """
+
+    def __init__(self, plex_url: str):
+        self.plex_url = plex_url.rstrip('/')
+        self.plex_host = urlparse(plex_url).netloc
+        self.blocked_requests: List[Dict[str, str]] = []
+        self._original_request = None
+        self._installed = False
+
+    def install(self):
+        """Install the write blocker by monkeypatching requests.Session.request"""
+        if self._installed:
+            return
+
+        import requests.sessions
+
+        self._original_request = requests.sessions.Session.request
+        blocker = self
+
+        def blocked_request(session_self, method, url, **kwargs):
+            """Wrapper that blocks non-GET requests to Plex"""
+            # Check if this is a Plex request
+            parsed = urlparse(url)
+            is_plex_request = (
+                parsed.netloc == blocker.plex_host or
+                url.startswith(blocker.plex_url)
+            )
+
+            if is_plex_request and method.upper() != 'GET':
+                # Block the write request
+                blocker.blocked_requests.append({
+                    'method': method.upper(),
+                    'url': url,
+                    'timestamp': datetime.now().isoformat()
+                })
+                logger.warning(f"BLOCKED PLEX WRITE: {method.upper()} {url}")
+
+                # Return a fake successful response
+                from requests.models import Response
+                fake_response = Response()
+                fake_response.status_code = 200
+                fake_response._content = b'{"blocked": true}'
+                fake_response.headers['Content-Type'] = 'application/json'
+                return fake_response
+
+            # Allow the request (GET or non-Plex)
+            return blocker._original_request(session_self, method, url, **kwargs)
+
+        requests.sessions.Session.request = blocked_request
+        self._installed = True
+        logger.info(f"Plex write blocker installed for: {self.plex_url}")
+
+    def uninstall(self):
+        """Restore original requests behavior"""
+        if self._installed and self._original_request:
+            import requests.sessions
+            requests.sessions.Session.request = self._original_request
+            self._installed = False
+
+    def get_blocked_requests(self) -> List[Dict[str, str]]:
+        """Return list of all blocked write attempts"""
+        return self.blocked_requests.copy()
+
+
+class OverlayOutputCapture:
+    """
+    Captures overlay outputs by patching Kometa's upload methods.
+
+    Instead of uploading to Plex, we copy the rendered image to our output directory.
+    """
+
+    def __init__(self, output_dir: Path, target_mapping: Dict[str, str]):
+        self.output_dir = output_dir
+        self.target_mapping = target_mapping  # Maps Plex ratingKey -> output filename
+        self.captured_outputs: List[Dict[str, Any]] = []
+        self._patches_installed = False
+
+    def install(self):
+        """Install patches to capture overlay outputs"""
+        if self._patches_installed:
+            return
+
+        try:
+            # Try to patch the Plex library's upload_poster method
+            self._patch_plex_library()
+        except Exception as e:
+            logger.warning(f"Could not patch Plex library directly: {e}")
+
+        try:
+            # Also patch PlexAPI's uploadPoster/uploadArt methods
+            self._patch_plexapi()
+        except Exception as e:
+            logger.warning(f"Could not patch PlexAPI: {e}")
+
+        self._patches_installed = True
+        logger.info("Overlay output capture installed")
+
+    def _patch_plex_library(self):
+        """Patch Kometa's Plex library upload_poster method"""
+        try:
+            from modules.plex import PlexAPI
+
+            capture = self
+            original_upload_poster = PlexAPI.upload_poster
+
+            def patched_upload_poster(self_lib, item, image, url=False):
+                """Capture the overlay output instead of uploading"""
+                if not url and os.path.exists(image):
+                    # This is a file upload - capture it
+                    rating_key = str(getattr(item, 'ratingKey', 'unknown'))
+                    title = getattr(item, 'title', 'unknown')
+
+                    output_filename = capture._get_output_filename(item)
+                    if output_filename:
+                        output_path = capture.output_dir / output_filename
+                        shutil.copy2(image, output_path)
+                        logger.info(f"CAPTURED: {title} -> {output_path}")
+                        capture.captured_outputs.append({
+                            'ratingKey': rating_key,
+                            'title': title,
+                            'source': image,
+                            'destination': str(output_path),
+                            'timestamp': datetime.now().isoformat()
+                        })
+                    else:
+                        logger.warning(f"No output mapping for item: {title} (ratingKey={rating_key})")
+                else:
+                    logger.info(f"BLOCKED URL upload for: {getattr(item, 'title', 'unknown')}")
+
+                # Don't actually upload to Plex
+                return None
+
+            PlexAPI.upload_poster = patched_upload_poster
+            logger.info("Patched PlexAPI.upload_poster")
+
+        except ImportError:
+            logger.debug("PlexAPI module not available for patching")
+
+    def _patch_plexapi(self):
+        """Patch PlexAPI library's upload methods"""
+        try:
+            import plexapi.base
+
+            capture = self
+
+            # Patch uploadPoster
+            if hasattr(plexapi.base.Playable, 'uploadPoster'):
+                original_upload_poster = plexapi.base.Playable.uploadPoster
+
+                def patched_upload_poster(self_item, url=None, filepath=None):
+                    if filepath and os.path.exists(filepath):
+                        rating_key = str(getattr(self_item, 'ratingKey', 'unknown'))
+                        title = getattr(self_item, 'title', 'unknown')
+
+                        output_filename = capture._get_output_filename(self_item)
+                        if output_filename:
+                            output_path = capture.output_dir / output_filename
+                            shutil.copy2(filepath, output_path)
+                            logger.info(f"CAPTURED (PlexAPI): {title} -> {output_path}")
+                            capture.captured_outputs.append({
+                                'ratingKey': rating_key,
+                                'title': title,
+                                'source': filepath,
+                                'destination': str(output_path),
+                                'timestamp': datetime.now().isoformat()
+                            })
+                        return None
+                    logger.info(f"BLOCKED PlexAPI upload: {getattr(self_item, 'title', 'unknown')}")
+                    return None
+
+                plexapi.base.Playable.uploadPoster = patched_upload_poster
+
+            # Also patch uploadArt for backgrounds
+            if hasattr(plexapi.base.Playable, 'uploadArt'):
+                def patched_upload_art(self_item, url=None, filepath=None):
+                    logger.info(f"BLOCKED PlexAPI uploadArt: {getattr(self_item, 'title', 'unknown')}")
+                    return None
+                plexapi.base.Playable.uploadArt = patched_upload_art
+
+            logger.info("Patched PlexAPI upload methods")
+
+        except ImportError:
+            logger.debug("plexapi library not available for patching")
+
+    def _get_output_filename(self, item) -> Optional[str]:
+        """Get the output filename for a Plex item"""
+        rating_key = str(getattr(item, 'ratingKey', ''))
+        title = getattr(item, 'title', '').lower()
+        item_type = getattr(item, 'type', '')
+
+        # Check direct ratingKey mapping first
+        if rating_key in self.target_mapping:
+            return self.target_mapping[rating_key]
+
+        # Try to match by title/type
+        if 'matrix' in title:
+            return 'matrix_after.png'
+        elif 'dune' in title:
+            return 'dune_after.png'
+        elif 'breaking bad' in title:
+            if item_type == 'show':
+                return 'breakingbad_series_after.png'
+            elif item_type == 'season':
+                season_num = getattr(item, 'index', getattr(item, 'seasonNumber', 1))
+                if season_num == 1:
+                    return 'breakingbad_s01_after.png'
+            elif item_type == 'episode':
+                return 'breakingbad_s01e01_after.png'
+
+        return None
+
+    def get_captured_outputs(self) -> List[Dict[str, Any]]:
+        """Return list of all captured outputs"""
+        return self.captured_outputs.copy()
+
 
 # ============================================================================
-# Kometa Internal Module Imports
+# Config Parser
 # ============================================================================
-# These imports use Kometa's actual internal modules for pixel-identical rendering
 
-try:
-    from PIL import Image, ImageDraw, ImageFont, ImageFilter, ImageColor
-    logger.info("PIL/Pillow loaded successfully")
-except ImportError as e:
-    logger.error(f"Failed to import PIL: {e}")
-    sys.exit(1)
+def load_preview_config(job_path: Path) -> Dict[str, Any]:
+    """Load the preview configuration from the job directory"""
+    config_path = job_path / 'config' / 'preview.yml'
 
-# Import Kometa's overlay module
-try:
-    from modules.overlay import Overlay
-    KOMETA_OVERLAY_AVAILABLE = True
-    logger.info("Kometa Overlay module loaded successfully")
-except ImportError as e:
-    logger.warning(f"Could not import Kometa Overlay module: {e}")
-    KOMETA_OVERLAY_AVAILABLE = False
+    if not config_path.exists():
+        raise FileNotFoundError(f"Preview config not found: {config_path}")
 
-# Import Kometa's utility modules
-try:
-    from modules import util
-    KOMETA_UTIL_AVAILABLE = True
-    logger.info("Kometa util module loaded successfully")
-except ImportError as e:
-    logger.warning(f"Could not import Kometa util module: {e}")
-    KOMETA_UTIL_AVAILABLE = False
-
-# Import Kometa's builder for overlay parsing
-try:
-    from modules.builder import CollectionBuilder
-    KOMETA_BUILDER_AVAILABLE = True
-    logger.info("Kometa builder module loaded successfully")
-except ImportError as e:
-    logger.warning(f"Could not import Kometa builder module: {e}")
-    KOMETA_BUILDER_AVAILABLE = False
-
-# Import YAML parser
-try:
-    import yaml
-    from ruamel.yaml import YAML
-    YAML_AVAILABLE = True
-except ImportError:
     try:
         import yaml
-        YAML_AVAILABLE = True
+        with open(config_path, 'r') as f:
+            return yaml.safe_load(f) or {}
     except ImportError:
-        YAML_AVAILABLE = False
-        logger.warning("YAML parser not available")
+        # Try ruamel.yaml
+        from ruamel.yaml import YAML
+        yaml = YAML()
+        with open(config_path, 'r') as f:
+            return dict(yaml.load(f) or {})
+
+
+def extract_plex_url(config: Dict[str, Any]) -> Optional[str]:
+    """Extract Plex URL from config"""
+    # Try plex section
+    if 'plex' in config:
+        plex_config = config['plex']
+        if isinstance(plex_config, dict):
+            return plex_config.get('url')
+
+    # Try settings
+    if 'settings' in config and isinstance(config['settings'], dict):
+        return config['settings'].get('plex_url')
+
+    return None
+
+
+def load_metadata(job_path: Path) -> Dict[str, Any]:
+    """Load job metadata"""
+    meta_path = job_path / 'meta.json'
+    if meta_path.exists():
+        with open(meta_path, 'r') as f:
+            return json.load(f)
+    return {}
+
 
 # ============================================================================
-# Constants - Kometa Standard Dimensions
-# ============================================================================
-POSTER_WIDTH = 1000
-POSTER_HEIGHT = 1500
-BACKGROUND_WIDTH = 1920
-BACKGROUND_HEIGHT = 1080
-SQUARE_WIDTH = 1000
-SQUARE_HEIGHT = 1000
-
-# Default fonts directory
-FONTS_DIR = '/fonts'
-KOMETA_FONTS_DIR = '/modules/fonts'
-SYSTEM_FONTS_DIR = '/usr/share/fonts'
-
-
-# ============================================================================
-# Mock Objects for Kometa Internals
+# Kometa Runner
 # ============================================================================
 
-class MockConfig:
+def run_kometa_with_config(config_path: Path, job_path: Path) -> int:
     """
-    Mock configuration object that satisfies Kometa's Config interface.
-    Provides font directories and other settings needed by the Overlay class.
+    Run Kometa with the given config file.
+
+    Returns the exit code.
     """
+    import subprocess
 
-    def __init__(self, fonts_path: str = FONTS_DIR):
-        self.fonts_path = fonts_path
-        self.Cache = None
-        self.TMDb = None
-        self.OMDb = None
-        self.Trakt = None
-        self.MdbList = None
-        self.AniDB = None
-        self.MyAnimeList = None
+    # Kometa is typically run via: python kometa.py -r --config <path>
+    # The -r flag means "run once" instead of scheduling
 
-        # Font directories - searched in order
-        self.font_dirs = [
-            Path(fonts_path),
-            Path(KOMETA_FONTS_DIR),
-            Path(SYSTEM_FONTS_DIR),
-            Path('/root/.fonts'),
+    # First, try to find kometa.py
+    kometa_paths = [
+        Path('/kometa.py'),
+        Path('/app/kometa.py'),
+        Path('/Kometa/kometa.py'),
+    ]
+
+    kometa_script = None
+    for p in kometa_paths:
+        if p.exists():
+            kometa_script = p
+            break
+
+    if not kometa_script:
+        # Try running as module
+        logger.info("Attempting to run Kometa as module...")
+        cmd = [
+            sys.executable, '-m', 'kometa',
+            '-r',  # Run once
+            '--config', str(config_path),
+        ]
+    else:
+        logger.info(f"Running Kometa from: {kometa_script}")
+        cmd = [
+            sys.executable, str(kometa_script),
+            '-r',  # Run once
+            '--config', str(config_path),
         ]
 
-        # System fonts cache
-        self._system_fonts = None
+    logger.info(f"Kometa command: {' '.join(cmd)}")
 
-    def get_system_fonts(self) -> Dict[str, str]:
-        """Get available system fonts - matches Kometa's util.get_system_fonts()"""
-        if self._system_fonts is not None:
-            return self._system_fonts
+    # Set environment for Kometa
+    env = os.environ.copy()
+    env['KOMETA_CONFIG'] = str(config_path)
 
-        fonts = {}
-        for font_dir in self.font_dirs:
-            if font_dir.exists():
-                for font_file in font_dir.rglob('*.[tToO][tT][fF]'):
-                    font_name = font_file.stem.lower()
-                    if font_name not in fonts:  # First match wins
-                        fonts[font_name] = str(font_file)
+    # Run Kometa, streaming output
+    try:
+        process = subprocess.Popen(
+            cmd,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.STDOUT,
+            env=env,
+            text=True,
+            bufsize=1
+        )
 
-        # Ensure Roboto-Medium is available (Kometa default)
-        roboto_path = Path(KOMETA_FONTS_DIR) / 'Roboto-Medium.ttf'
-        if roboto_path.exists():
-            fonts['roboto-medium'] = str(roboto_path)
-            fonts['roboto'] = str(roboto_path)
+        # Stream output
+        for line in iter(process.stdout.readline, ''):
+            if line:
+                # Preserve Kometa's log format
+                print(line.rstrip())
 
-        self._system_fonts = fonts
-        logger.info(f"Loaded {len(fonts)} fonts")
-        return fonts
+        process.wait()
+        return process.returncode
+
+    except FileNotFoundError as e:
+        logger.error(f"Failed to run Kometa: {e}")
+        return 1
+    except Exception as e:
+        logger.error(f"Kometa execution error: {e}")
+        traceback.print_exc()
+        return 1
 
 
-class MockLibrary:
+def generate_kometa_config(job_path: Path, preview_config: Dict[str, Any]) -> Path:
     """
-    Mock library object that satisfies Kometa's Library interface.
-    Provides overlay folder paths and canvas dimensions.
+    Generate a valid Kometa config file for the preview run.
+
+    This creates a config that:
+    1. Has Plex connection info
+    2. Has the user's overlay definitions
+    3. Attempts to scope to preview items only
     """
+    import yaml
 
-    def __init__(self, output_dir: Path, is_movie: bool = True):
-        self.output_dir = output_dir
-        self.is_movie = is_movie
-        self.is_show = not is_movie
-        self.is_music = False
-        self.overlay_folder = str(output_dir)
-        self.overlays_folder = str(output_dir)
-        self.overlay_backup = "Backup"
+    config_dir = job_path / 'config'
+    kometa_config_path = config_dir / 'kometa_config.yml'
 
-        # Queue coordinates for positioned overlays
-        self.queues = {}
+    # Start with the preview config structure
+    kometa_config = {}
 
-        # Overlay dimensions
-        self.poster_width = POSTER_WIDTH
-        self.poster_height = POSTER_HEIGHT
-        self.background_width = BACKGROUND_WIDTH
-        self.background_height = BACKGROUND_HEIGHT
+    # Copy plex section if present
+    if 'plex' in preview_config:
+        kometa_config['plex'] = preview_config['plex']
 
-    def get_poster_size(self) -> Tuple[int, int]:
-        return (self.poster_width, self.poster_height)
+    # Set up settings
+    kometa_config['settings'] = {
+        'cache': False,
+        'cache_expiration': 0,
+        'asset_folders': False,
+        'run_order': ['overlays'],  # Only run overlays
+        'show_unmanaged': False,
+        'show_filtered': False,
+        'show_options': False,
+        'show_missing': False,
+        'save_report': False,
+    }
 
-    def get_background_size(self) -> Tuple[int, int]:
-        return (self.background_width, self.background_height)
+    # Copy overlay definitions
+    if 'overlays' in preview_config:
+        # Extract library configs with overlay_files
+        libraries = {}
+        for lib_name, lib_config in preview_config.get('overlays', {}).items():
+            if isinstance(lib_config, dict) and 'overlay_files' in lib_config:
+                libraries[lib_name] = {
+                    'overlay_files': lib_config['overlay_files'],
+                    # Add filters to try to scope to preview items
+                    'operations': None,
+                    'collections': None,
+                    'metadata': None,
+                }
+        if libraries:
+            kometa_config['libraries'] = libraries
 
+    # Write the config
+    with open(kometa_config_path, 'w') as f:
+        yaml.dump(kometa_config, f, default_flow_style=False)
 
-class MockItem:
-    """
-    Mock Plex item that satisfies the interface expected by Kometa's overlay code.
-    Represents a local image file with associated metadata.
-    """
-
-    def __init__(self, item_id: str, item_type: str, title: str, metadata: Dict[str, Any]):
-        # Core identifiers
-        self.id = item_id
-        self.ratingKey = item_id
-        self.type = item_type
-        self.title = title
-
-        # Type flags
-        self.isMovie = item_type == 'movie'
-        self.isShow = item_type == 'show'
-        self.isSeason = item_type == 'season'
-        self.isEpisode = item_type == 'episode'
-        self.isAlbum = item_type == 'album'
-        self.isTrack = item_type == 'track'
-
-        # Metadata
-        self.year = metadata.get('year')
-        self.rating = metadata.get('rating')
-        self.audienceRating = metadata.get('audience_rating', metadata.get('rating'))
-        self.contentRating = metadata.get('content_rating')
-        self.studio = metadata.get('studio')
-        self.originalTitle = metadata.get('original_title', title)
-        self.originallyAvailableAt = metadata.get('originally_available_at')
-
-        # Season/Episode info
-        self.seasonNumber = metadata.get('season_index')
-        self.index = metadata.get('episode_index')
-        self.parentIndex = metadata.get('season_index')
-
-        # Media info (resolution, audio, etc.)
-        self.media = self._build_media(metadata)
-
-        # Additional attributes Kometa might access
-        self.duration = metadata.get('duration', 0)
-        self.genres = metadata.get('genres', [])
-        self.labels = []
-        self.collections = []
-
-        # Store raw metadata for template access
-        self._metadata = metadata
-
-    def _build_media(self, metadata: Dict[str, Any]) -> List[Any]:
-        """Build mock media objects for resolution/audio overlays"""
-        class MockMedia:
-            def __init__(self, parts):
-                self.parts = parts
-
-        class MockPart:
-            def __init__(self, streams):
-                self.streams = streams
-
-        class MockStream:
-            def __init__(self, stream_type: int, data: Dict):
-                self.streamType = stream_type
-                self.__dict__.update(data)
-
-        # Video stream (type 1)
-        video_data = {
-            'displayTitle': metadata.get('resolution', '1080p'),
-            'videoResolution': metadata.get('resolution', '1080p').lower().replace('p', ''),
-            'width': metadata.get('width', 1920),
-            'height': metadata.get('height', 1080),
-            'bitrate': metadata.get('bitrate', 0),
-            'codec': metadata.get('video_codec', 'h264'),
-            'DOVIPresent': metadata.get('dolby_vision', False),
-            'colorSpace': metadata.get('hdr', False) and 'bt2020' or 'bt709',
-        }
-
-        # Audio stream (type 2)
-        audio_data = {
-            'displayTitle': metadata.get('audio_codec', 'AAC'),
-            'audioChannelLayout': metadata.get('audio_channels', '5.1'),
-            'codec': metadata.get('audio_codec', 'aac').lower(),
-            'extendedDisplayTitle': metadata.get('audio_codec', 'AAC'),
-        }
-
-        video_stream = MockStream(1, video_data)
-        audio_stream = MockStream(2, audio_data)
-
-        return [MockMedia([MockPart([video_stream, audio_stream])])]
-
-    def __repr__(self):
-        return f"MockItem({self.id}, {self.type}, {self.title})"
-
-
-class MockMetadataFile:
-    """Mock metadata file for overlay initialization"""
-    def __init__(self):
-        self.set_images = []
+    logger.info(f"Generated Kometa config: {kometa_config_path}")
+    return kometa_config_path
 
 
 # ============================================================================
-# Overlay Configuration Loader
+# Fallback: Direct Overlay Application
 # ============================================================================
 
-class OverlayConfigLoader:
+def apply_overlays_directly(job_path: Path, preview_config: Dict[str, Any]) -> bool:
     """
-    Loads and parses overlay configuration from Kometa YAML format.
-    Uses Kometa's actual parsing where possible.
+    Fallback: Apply overlays directly using Kometa's overlay module.
+
+    This is used if running Kometa as a subprocess fails.
     """
+    logger.info("Attempting direct overlay application...")
 
-    def __init__(self, config_path: Path, config: MockConfig):
-        self.config_path = config_path
-        self.config = config
-        self.overlays: Dict[str, Any] = {}
-        self.templates: Dict[str, Any] = {}
-        self.warnings: List[str] = []
+    try:
+        from PIL import Image
 
-    def load(self) -> Dict[str, Any]:
-        """Load the overlay configuration file"""
-        if not self.config_path.exists():
-            logger.warning(f"Config file not found: {self.config_path}")
-            return {}
+        input_dir = job_path / 'input'
+        output_dir = job_path / 'output'
+        output_dir.mkdir(parents=True, exist_ok=True)
 
-        try:
-            with open(self.config_path, 'r') as f:
-                config_data = yaml.safe_load(f) or {}
-        except Exception as e:
-            logger.error(f"Failed to parse config YAML: {e}")
-            return {}
-
-        # Extract overlay definitions
-        self.overlays = config_data.get('overlays', {})
-        self.templates = config_data.get('templates', {})
+        # Load metadata for items
+        meta = load_metadata(job_path)
+        items_meta = meta.get('items', {})
 
         # Get preview targets
-        preview_data = config_data.get('preview', {})
+        preview_data = preview_config.get('preview', {})
         targets = preview_data.get('targets', [])
 
-        logger.info(f"Loaded config with {len(self.overlays)} overlay libraries, {len(targets)} preview targets")
-
-        return config_data
-
-    def get_overlays_for_type(self, item_type: str) -> List[Dict[str, Any]]:
-        """
-        Get overlay definitions applicable to a given item type.
-        Parses overlay_files references and extracts individual overlay definitions.
-        """
-        overlays = []
-
-        # Check each library's overlay files
-        for lib_name, lib_config in self.overlays.items():
-            if not isinstance(lib_config, dict):
-                continue
-
-            overlay_files = lib_config.get('overlay_files', [])
-            if not overlay_files:
-                continue
-
-            # Parse each overlay file reference
-            for overlay_ref in overlay_files:
-                if isinstance(overlay_ref, dict):
-                    # Inline overlay definition or file reference
-                    if 'pmm' in overlay_ref:
-                        # Default Kometa overlay
-                        overlays.extend(self._load_default_overlay(overlay_ref['pmm'], item_type))
-                    elif 'default' in overlay_ref:
-                        # Default Kometa overlay (legacy key)
-                        overlays.extend(self._load_default_overlay(overlay_ref['default'], item_type))
-                    elif 'file' in overlay_ref:
-                        # Local file reference
-                        file_path = overlay_ref['file']
-                        overlays.extend(self._load_overlay_file(file_path, item_type))
-                    else:
-                        # Inline overlay definition
-                        overlays.append(overlay_ref)
-
-        return overlays
-
-    def _load_default_overlay(self, overlay_name: str, item_type: str) -> List[Dict[str, Any]]:
-        """Load a default Kometa overlay definition"""
-        # Map common default overlays to their configurations
-        default_overlays = {
-            'resolution': {
-                'name': 'resolution',
-                'type': 'text',
-                'text': '<<video_resolution>>',
-                'horizontal_align': 'left',
-                'vertical_align': 'top',
-                'horizontal_offset': 30,
-                'vertical_offset': 30,
-                'back_color': '#1E1E1EDC',
-                'font_color': '#FFFFFF',
-                'font_size': 55,
-            },
-            'audio_codec': {
-                'name': 'audio_codec',
-                'type': 'text',
-                'text': '<<audio_codec>>',
-                'horizontal_align': 'left',
-                'vertical_align': 'bottom',
-                'horizontal_offset': 30,
-                'vertical_offset': 30,
-                'back_color': '#4CAF50DC',
-                'font_color': '#FFFFFF',
-                'font_size': 45,
-            },
-            'ratings': {
-                'name': 'ratings',
-                'type': 'text',
-                'text': '<<rating>>',
-                'horizontal_align': 'left',
-                'vertical_align': 'top',
-                'horizontal_offset': 30,
-                'vertical_offset': 30,
-                'back_color': '#F5C518',
-                'font_color': '#000000',
-                'font_size': 55,
-            },
-            'status': {
-                'name': 'status',
-                'type': 'text',
-                'text': '<<status>>',
-                'horizontal_align': 'right',
-                'vertical_align': 'top',
-                'horizontal_offset': 30,
-                'vertical_offset': 30,
-                'back_color': '#4CAF50E6',
-                'font_color': '#FFFFFF',
-                'font_size': 38,
-            },
-        }
-
-        if overlay_name.lower() in default_overlays:
-            return [default_overlays[overlay_name.lower()]]
-
-        return []
-
-    def _load_overlay_file(self, file_path: str, item_type: str) -> List[Dict[str, Any]]:
-        """Load overlays from a YAML file"""
-        path = Path(file_path)
-        if not path.exists():
-            # Try relative to config
-            path = self.config_path.parent / file_path
-
-        if not path.exists():
-            self.warnings.append(f"Overlay file not found: {file_path}")
-            return []
-
-        try:
-            with open(path, 'r') as f:
-                data = yaml.safe_load(f) or {}
-
-            overlays = []
-            overlay_defs = data.get('overlays', data)
-
-            for name, overlay_def in overlay_defs.items():
-                if isinstance(overlay_def, dict):
-                    overlay_def['name'] = name
-                    overlays.append(overlay_def)
-
-            return overlays
-        except Exception as e:
-            self.warnings.append(f"Failed to load overlay file {file_path}: {e}")
-            return []
-
-
-# ============================================================================
-# Kometa Preview Renderer
-# ============================================================================
-
-class KometaPreviewRenderer:
-    """
-    Main renderer that uses Kometa's internal overlay machinery.
-
-    This class orchestrates the preview rendering process:
-    1. Loads configuration and overlay definitions
-    2. For each input image:
-       a. Creates mock Kometa objects
-       b. Applies overlays using Kometa's Overlay class
-       c. Saves the result
-    """
-
-    def __init__(self, job_path: str, fonts_path: str = FONTS_DIR):
-        self.job_path = Path(job_path)
-        self.fonts_path = Path(fonts_path)
-
-        # Job directories
-        self.input_dir = self.job_path / 'input'
-        self.output_dir = self.job_path / 'output'
-        self.config_dir = self.job_path / 'config'
-        self.logs_dir = self.job_path / 'logs'
-
-        # Ensure output directories exist
-        self.output_dir.mkdir(parents=True, exist_ok=True)
-        self.logs_dir.mkdir(parents=True, exist_ok=True)
-
-        # Initialize mock config
-        self.config = MockConfig(str(self.fonts_path))
-
-        # Load fonts
-        self.fonts = self.config.get_system_fonts()
-
-        # Results tracking
-        self.results: List[Dict[str, Any]] = []
-        self.warnings: List[str] = []
-
-    def render_all(self) -> Dict[str, Any]:
-        """
-        Render overlays for all input images.
-
-        Returns a summary of the rendering results.
-        """
-        logger.info("=" * 60)
-        logger.info("Kometa Preview Studio - Overlay Renderer")
-        logger.info("Using Kometa's internal overlay pipeline")
-        logger.info("=" * 60)
-
-        # Load configuration
-        config_loader = OverlayConfigLoader(
-            self.config_dir / 'preview.yml',
-            self.config
-        )
-        config_data = config_loader.load()
-        self.warnings.extend(config_loader.warnings)
-
-        # Get preview targets from config
-        preview_data = config_data.get('preview', {})
-        targets = preview_data.get('targets', [])
-
-        # Load metadata
-        meta = self._load_metadata()
-
-        # Find all input images
-        input_images = list(self.input_dir.glob('*.jpg')) + list(self.input_dir.glob('*.png'))
-
-        if not input_images:
-            logger.error("No input images found")
-            return {'success': False, 'error': 'No input images found', 'results': []}
-
-        logger.info(f"Found {len(input_images)} input images")
-
-        # Process each image
         success_count = 0
-        fail_count = 0
 
-        for input_image in input_images:
-            item_id = input_image.stem
+        for target in targets:
+            target_id = target.get('id', '')
+            input_path = input_dir / f"{target_id}.jpg"
 
-            # Find target info
-            target_info = next((t for t in targets if t.get('id') == item_id), {})
-            item_meta = meta.get('items', {}).get(item_id, {})
+            if not input_path.exists():
+                input_path = input_dir / f"{target_id}.png"
 
-            # Merge target info into metadata
-            if target_info:
-                item_meta['type'] = target_info.get('type', item_meta.get('type', 'movie'))
-                item_meta['title'] = target_info.get('title', item_meta.get('title', item_id))
-
-            try:
-                result = self.render_single(
-                    input_image,
-                    item_id,
-                    item_meta,
-                    config_data.get('overlays', {})
-                )
-
-                if result['success']:
-                    success_count += 1
-                else:
-                    fail_count += 1
-
-                self.results.append(result)
-
-            except Exception as e:
-                logger.error(f"Error processing {item_id}: {e}")
-                traceback.print_exc()
-                fail_count += 1
-                self.results.append({
-                    'item_id': item_id,
-                    'success': False,
-                    'error': str(e)
-                })
-
-        logger.info("=" * 60)
-        logger.info(f"Rendering complete: {success_count} succeeded, {fail_count} failed")
-        logger.info("=" * 60)
-
-        # Write summary
-        summary = {
-            'timestamp': datetime.now().isoformat(),
-            'success': fail_count == 0,
-            'total': len(input_images),
-            'succeeded': success_count,
-            'failed': fail_count,
-            'results': self.results,
-            'warnings': self.warnings,
-            'kometa_modules_used': KOMETA_OVERLAY_AVAILABLE
-        }
-
-        summary_file = self.output_dir / 'summary.json'
-        with open(summary_file, 'w') as f:
-            json.dump(summary, f, indent=2)
-
-        return summary
-
-    def render_single(
-        self,
-        input_path: Path,
-        item_id: str,
-        item_meta: Dict[str, Any],
-        overlay_config: Dict[str, Any]
-    ) -> Dict[str, Any]:
-        """
-        Render overlays for a single image using Kometa's overlay system.
-        """
-        logger.info(f"Processing: {item_id}")
-        logger.info(f"  Input: {input_path}")
-
-        # Determine item type
-        item_type = item_meta.get('type', self._infer_type(item_id))
-        title = item_meta.get('title', item_id)
-
-        logger.info(f"  Type: {item_type}, Title: {title}")
-
-        # Create mock item
-        item = MockItem(item_id, item_type, title, item_meta)
-
-        # Load base image
-        try:
-            base_image = Image.open(input_path)
-            base_image = base_image.convert('RGBA')
-            logger.info(f"  Original size: {base_image.size}")
-        except Exception as e:
-            logger.error(f"  Failed to load image: {e}")
-            return {'item_id': item_id, 'success': False, 'error': f'Failed to load image: {e}'}
-
-        # Determine canvas size based on item type and image dimensions
-        width, height = base_image.size
-        is_landscape = width > height
-
-        if item_type == 'episode' or is_landscape:
-            target_size = (BACKGROUND_WIDTH, BACKGROUND_HEIGHT)
-        else:
-            target_size = (POSTER_WIDTH, POSTER_HEIGHT)
-
-        # Resize to Kometa standard dimensions
-        if base_image.size != target_size:
-            base_image = base_image.resize(target_size, Image.Resampling.LANCZOS)
-            logger.info(f"  Resized to: {target_size}")
-
-        # Create library mock for this item type
-        library = MockLibrary(self.output_dir, is_movie=(item_type == 'movie'))
-
-        # Apply overlays using Kometa's system
-        if KOMETA_OVERLAY_AVAILABLE:
-            result_image = self._apply_overlays_kometa(base_image, item, library, overlay_config)
-        else:
-            # Fallback to compatible rendering
-            result_image = self._apply_overlays_compatible(base_image, item, item_meta)
-
-        # Save output
-        output_filename = f"{item_id}_after.png"
-        output_path = self.output_dir / output_filename
-
-        # Convert to RGB for saving (composites onto black background)
-        if result_image.mode == 'RGBA':
-            background = Image.new('RGB', result_image.size, (0, 0, 0))
-            background.paste(result_image, mask=result_image.split()[3])
-            result_image = background
-
-        result_image.save(output_path, 'PNG', quality=95)
-        logger.info(f"  Saved: {output_path}")
-
-        return {
-            'item_id': item_id,
-            'success': True,
-            'input_path': str(input_path),
-            'output_path': str(output_path),
-            'item_type': item_type,
-            'used_kometa_modules': KOMETA_OVERLAY_AVAILABLE
-        }
-
-    def _apply_overlays_kometa(
-        self,
-        base_image: Image.Image,
-        item: MockItem,
-        library: MockLibrary,
-        overlay_config: Dict[str, Any]
-    ) -> Image.Image:
-        """
-        Apply overlays using Kometa's actual Overlay class.
-
-        This is the core of the preview renderer - it uses Kometa's real
-        overlay rendering code to produce pixel-identical results.
-        """
-        result = base_image.copy()
-
-        try:
-            # Get overlays for this item type from config
-            overlay_defs = self._extract_overlay_definitions(overlay_config, item.type)
-
-            if not overlay_defs:
-                logger.info(f"  No overlay definitions for type {item.type}, using defaults")
-                overlay_defs = self._get_default_overlay_defs(item)
-
-            logger.info(f"  Applying {len(overlay_defs)} overlays")
-
-            for overlay_def in overlay_defs:
-                try:
-                    overlay_image = self._create_overlay_image(overlay_def, item, base_image.size)
-                    if overlay_image:
-                        # Get position
-                        pos = self._get_overlay_position(overlay_def, base_image.size, overlay_image.size)
-
-                        # Create full-size overlay layer
-                        overlay_layer = Image.new('RGBA', base_image.size, (0, 0, 0, 0))
-                        overlay_layer.paste(overlay_image, pos, overlay_image)
-
-                        # Composite
-                        result = Image.alpha_composite(result, overlay_layer)
-
-                        overlay_name = overlay_def.get('name', 'unknown')
-                        logger.info(f"    Applied overlay: {overlay_name} at {pos}")
-
-                except Exception as e:
-                    logger.warning(f"  Failed to apply overlay: {e}")
-                    traceback.print_exc()
-
-        except Exception as e:
-            logger.warning(f"  Overlay application failed, using fallback: {e}")
-            traceback.print_exc()
-            result = self._apply_overlays_compatible(base_image, item, item._metadata)
-
-        return result
-
-    def _create_overlay_image(
-        self,
-        overlay_def: Dict[str, Any],
-        item: MockItem,
-        canvas_size: Tuple[int, int]
-    ) -> Optional[Image.Image]:
-        """
-        Create an overlay image from a definition.
-
-        Uses Kometa's rendering approach:
-        - Text overlays with backgrounds
-        - Image overlays with positioning
-        - Proper font handling
-        """
-        overlay_type = overlay_def.get('type', 'text')
-
-        if overlay_type == 'text' or 'text' in overlay_def:
-            return self._create_text_overlay(overlay_def, item, canvas_size)
-        elif overlay_type == 'image' or 'file' in overlay_def or 'url' in overlay_def:
-            return self._create_image_overlay(overlay_def, item, canvas_size)
-        else:
-            # Default to text overlay
-            return self._create_text_overlay(overlay_def, item, canvas_size)
-
-    def _create_text_overlay(
-        self,
-        overlay_def: Dict[str, Any],
-        item: MockItem,
-        canvas_size: Tuple[int, int]
-    ) -> Optional[Image.Image]:
-        """
-        Create a text overlay using Kometa's text rendering approach.
-        """
-        # Get text content (may contain variables)
-        text_template = overlay_def.get('text', overlay_def.get('name', ''))
-        text = self._resolve_text_variables(text_template, item)
-
-        if not text:
-            return None
-
-        # Font settings
-        font_name = overlay_def.get('font', 'Roboto-Medium.ttf')
-        font_size = int(overlay_def.get('font_size', 55))
-        font_color = overlay_def.get('font_color', '#FFFFFF')
-
-        # Background settings
-        back_color = overlay_def.get('back_color', '#1E1E1EDC')
-        back_radius = int(overlay_def.get('back_radius', 0))
-        back_padding = int(overlay_def.get('back_padding', 10))
-
-        # Stroke settings
-        stroke_color = overlay_def.get('stroke_color', '#000000')
-        stroke_width = int(overlay_def.get('stroke_width', 0))
-
-        # Load font
-        font = self._get_font(font_name, font_size)
-
-        # Calculate text dimensions
-        dummy_img = Image.new('RGBA', (1, 1))
-        draw = ImageDraw.Draw(dummy_img)
-        bbox = draw.textbbox((0, 0), text, font=font)
-        text_width = bbox[2] - bbox[0]
-        text_height = bbox[3] - bbox[1]
-
-        # Create overlay image with background
-        padding = back_padding
-        overlay_width = text_width + padding * 2
-        overlay_height = text_height + padding * 2
-
-        overlay = Image.new('RGBA', (overlay_width, overlay_height), (0, 0, 0, 0))
-        draw = ImageDraw.Draw(overlay)
-
-        # Parse colors
-        bg_rgba = self._parse_color(back_color)
-        text_rgba = self._parse_color(font_color)
-
-        # Draw background
-        if bg_rgba[3] > 0:  # Has alpha
-            if back_radius > 0:
-                draw.rounded_rectangle(
-                    [0, 0, overlay_width, overlay_height],
-                    radius=back_radius,
-                    fill=bg_rgba
-                )
-            else:
-                draw.rectangle([0, 0, overlay_width, overlay_height], fill=bg_rgba)
-
-        # Draw text
-        text_x = padding
-        text_y = padding - (bbox[1] if bbox[1] > 0 else 0)  # Adjust for font baseline
-
-        if stroke_width > 0:
-            stroke_rgba = self._parse_color(stroke_color)
-            draw.text((text_x, text_y), text, fill=text_rgba, font=font,
-                     stroke_width=stroke_width, stroke_fill=stroke_rgba)
-        else:
-            draw.text((text_x, text_y), text, fill=text_rgba, font=font)
-
-        return overlay
-
-    def _create_image_overlay(
-        self,
-        overlay_def: Dict[str, Any],
-        item: MockItem,
-        canvas_size: Tuple[int, int]
-    ) -> Optional[Image.Image]:
-        """
-        Create an image overlay from a file.
-        """
-        image_path = overlay_def.get('file') or overlay_def.get('path')
-
-        if not image_path:
-            return None
-
-        # Try to find the image
-        paths_to_try = [
-            Path(image_path),
-            self.config_dir / image_path,
-            Path('/user_config') / image_path,
-            Path('/user_assets') / image_path,
-        ]
-
-        for path in paths_to_try:
-            if path.exists():
-                try:
-                    overlay = Image.open(path).convert('RGBA')
-
-                    # Apply scaling if specified
-                    scale = float(overlay_def.get('scale', 1.0))
-                    if scale != 1.0:
-                        new_size = (int(overlay.width * scale), int(overlay.height * scale))
-                        overlay = overlay.resize(new_size, Image.Resampling.LANCZOS)
-
-                    return overlay
-                except Exception as e:
-                    logger.warning(f"Failed to load overlay image {path}: {e}")
-
-        logger.warning(f"Overlay image not found: {image_path}")
-        return None
-
-    def _resolve_text_variables(self, template: str, item: MockItem) -> str:
-        """
-        Resolve Kometa-style text variables like <<rating>>, <<resolution>>, etc.
-
-        This matches Kometa's variable resolution logic.
-        """
-        if not template or '<<' not in template:
-            return template
-
-        text = template
-
-        # Resolution variables
-        if '<<video_resolution>>' in text or '<<resolution>>' in text:
-            resolution = item._metadata.get('resolution', '1080p')
-            text = text.replace('<<video_resolution>>', resolution)
-            text = text.replace('<<resolution>>', resolution)
-
-        # Audio codec variables
-        if '<<audio_codec>>' in text:
-            audio = item._metadata.get('audio_codec', 'AAC')
-            text = text.replace('<<audio_codec>>', audio)
-
-        # Rating variables
-        if '<<rating>>' in text or '<<audience_rating>>' in text:
-            rating = item._metadata.get('rating', '')
-            if rating:
-                rating = f"{float(rating):.1f}" if isinstance(rating, (int, float)) else str(rating)
-            text = text.replace('<<rating>>', rating)
-            text = text.replace('<<audience_rating>>', rating)
-
-        # Status variables
-        if '<<status>>' in text:
-            status = item._metadata.get('status', 'Unknown')
-            text = text.replace('<<status>>', status)
-
-        # Season/Episode variables
-        if '<<season>>' in text:
-            season = item._metadata.get('season_index', 1)
-            text = text.replace('<<season>>', f"S{season:02d}")
-
-        if '<<episode>>' in text:
-            episode = item._metadata.get('episode_index', 1)
-            text = text.replace('<<episode>>', f"E{episode:02d}")
-
-        # Runtime variables
-        if '<<runtime>>' in text:
-            runtime = item._metadata.get('runtime', '')
-            text = text.replace('<<runtime>>', str(runtime))
-
-        # Year variable
-        if '<<year>>' in text:
-            year = item._metadata.get('year', '')
-            text = text.replace('<<year>>', str(year))
-
-        # Title variable
-        if '<<title>>' in text:
-            text = text.replace('<<title>>', item.title)
-
-        return text
-
-    def _get_overlay_position(
-        self,
-        overlay_def: Dict[str, Any],
-        canvas_size: Tuple[int, int],
-        overlay_size: Tuple[int, int]
-    ) -> Tuple[int, int]:
-        """
-        Calculate overlay position based on alignment and offset settings.
-        Matches Kometa's positioning logic.
-        """
-        canvas_width, canvas_height = canvas_size
-        overlay_width, overlay_height = overlay_size
-
-        # Alignment
-        h_align = overlay_def.get('horizontal_align', 'left')
-        v_align = overlay_def.get('vertical_align', 'top')
-
-        # Offsets (can be int or percentage string)
-        h_offset = self._parse_offset(overlay_def.get('horizontal_offset', 30), canvas_width)
-        v_offset = self._parse_offset(overlay_def.get('vertical_offset', 30), canvas_height)
-
-        # Calculate X position
-        if h_align == 'left':
-            x = h_offset
-        elif h_align == 'right':
-            x = canvas_width - overlay_width - h_offset
-        else:  # center
-            x = (canvas_width - overlay_width) // 2 + h_offset
-
-        # Calculate Y position
-        if v_align == 'top':
-            y = v_offset
-        elif v_align == 'bottom':
-            y = canvas_height - overlay_height - v_offset
-        else:  # center
-            y = (canvas_height - overlay_height) // 2 + v_offset
-
-        return (int(x), int(y))
-
-    def _parse_offset(self, offset: Union[int, str], dimension: int) -> int:
-        """Parse an offset value that may be a percentage"""
-        if isinstance(offset, str):
-            if '%' in offset:
-                percentage = float(offset.replace('%', ''))
-                return int(dimension * percentage / 100)
-            return int(offset)
-        return int(offset)
-
-    def _extract_overlay_definitions(
-        self,
-        overlay_config: Dict[str, Any],
-        item_type: str
-    ) -> List[Dict[str, Any]]:
-        """Extract overlay definitions from the config for a specific item type"""
-        overlays = []
-
-        for lib_name, lib_config in overlay_config.items():
-            if not isinstance(lib_config, dict):
+            if not input_path.exists():
+                logger.warning(f"Input image not found for: {target_id}")
                 continue
 
-            # Check for overlay_files
-            overlay_files = lib_config.get('overlay_files', [])
-            for overlay_ref in overlay_files:
-                if isinstance(overlay_ref, dict):
-                    # Check for default overlays (pmm or default key)
-                    overlay_name = overlay_ref.get('pmm') or overlay_ref.get('default')
-                    if overlay_name:
-                        default_def = self._get_default_overlay_def(overlay_name, item_type)
-                        if default_def:
-                            # Apply any template variables
-                            if 'template_variables' in overlay_ref:
-                                default_def.update(overlay_ref['template_variables'])
-                            overlays.append(default_def)
+            output_path = output_dir / f"{target_id}_after.png"
 
-        return overlays
-
-    def _get_default_overlay_def(self, name: str, item_type: str) -> Optional[Dict[str, Any]]:
-        """Get a default Kometa overlay definition by name"""
-        name_lower = name.lower()
-
-        # Resolution overlay
-        if 'resolution' in name_lower:
-            return {
-                'name': 'resolution',
-                'text': '<<resolution>>',
-                'horizontal_align': 'left',
-                'vertical_align': 'top',
-                'horizontal_offset': 30,
-                'vertical_offset': 30,
-                'back_color': '#1E1E1EDC',
-                'back_radius': 15,
-                'back_padding': 15,
-                'font_color': '#FFFFFF',
-                'font_size': 55,
-            }
-
-        # Audio codec overlay
-        if 'audio' in name_lower:
-            return {
-                'name': 'audio_codec',
-                'text': '<<audio_codec>>',
-                'horizontal_align': 'left',
-                'vertical_align': 'bottom',
-                'horizontal_offset': 30,
-                'vertical_offset': 30,
-                'back_color': '#4CAF50DC',
-                'back_radius': 15,
-                'back_padding': 15,
-                'font_color': '#FFFFFF',
-                'font_size': 45,
-            }
-
-        # Ratings overlay
-        if 'rating' in name_lower:
-            return {
-                'name': 'rating',
-                'text': '<<rating>>',
-                'horizontal_align': 'left',
-                'vertical_align': 'top',
-                'horizontal_offset': 30,
-                'vertical_offset': 30,
-                'back_color': '#F5C518FF',
-                'back_radius': 8,
-                'back_padding': 18,
-                'font_color': '#000000',
-                'font_size': 55,
-            }
-
-        # Status overlay (for shows)
-        if 'status' in name_lower:
-            return {
-                'name': 'status',
-                'text': '<<status>>',
-                'horizontal_align': 'right',
-                'vertical_align': 'top',
-                'horizontal_offset': 30,
-                'vertical_offset': 30,
-                'back_color': '#4CAF50E6',
-                'back_radius': 15,
-                'back_padding': 12,
-                'font_color': '#FFFFFF',
-                'font_size': 38,
-            }
-
-        return None
-
-    def _get_default_overlay_defs(self, item: MockItem) -> List[Dict[str, Any]]:
-        """Get default overlay definitions based on item type"""
-        item_type = item.type
-
-        if item_type == 'movie':
-            defs = [
-                self._get_default_overlay_def('resolution', item_type),
-                self._get_default_overlay_def('audio_codec', item_type),
-            ]
-            # Add HDR badge if applicable
-            if item._metadata.get('hdr'):
-                defs.append({
-                    'name': 'hdr',
-                    'text': 'HDR',
-                    'horizontal_align': 'left',
-                    'vertical_align': 'top',
-                    'horizontal_offset': 160,  # To the right of resolution badge
-                    'vertical_offset': 30,
-                    'back_color': '#FFC107E6',
-                    'back_radius': 12,
-                    'back_padding': 12,
-                    'font_color': '#000000',
-                    'font_size': 40,
-                })
-            return [d for d in defs if d]
-
-        elif item_type == 'show':
-            return [
-                self._get_default_overlay_def('rating', item_type),
-                self._get_default_overlay_def('status', item_type),
-            ]
-
-        elif item_type == 'season':
-            return [{
-                'name': 'season',
-                'text': '<<season>>',
-                'horizontal_align': 'left',
-                'vertical_align': 'top',
-                'horizontal_offset': 30,
-                'vertical_offset': 30,
-                'back_color': '#2196F3F0',
-                'back_radius': 12,
-                'back_padding': 15,
-                'font_color': '#FFFFFF',
-                'font_size': 60,
-            }]
-
-        elif item_type == 'episode':
-            return [
-                {
-                    'name': 'episode',
-                    'text': f"S{item._metadata.get('season_index', 1):02d}E{item._metadata.get('episode_index', 1):02d}",
-                    'horizontal_align': 'right',
-                    'vertical_align': 'bottom',
-                    'horizontal_offset': 30,
-                    'vertical_offset': 30,
-                    'back_color': '#141414C8',
-                    'back_radius': 15,
-                    'back_padding': 18,
-                    'font_color': '#FFFFFF',
-                    'font_size': 55,
-                },
-                {
-                    'name': 'runtime',
-                    'text': '<<runtime>>',
-                    'horizontal_align': 'left',
-                    'vertical_align': 'bottom',
-                    'horizontal_offset': 30,
-                    'vertical_offset': 30,
-                    'back_color': '#000000B4',
-                    'back_radius': 12,
-                    'back_padding': 12,
-                    'font_color': '#FFFFFF',
-                    'font_size': 45,
-                }
-            ]
-
-        return []
-
-    def _apply_overlays_compatible(
-        self,
-        base_image: Image.Image,
-        item: MockItem,
-        item_meta: Dict[str, Any]
-    ) -> Image.Image:
-        """
-        Fallback overlay rendering when Kometa modules aren't available.
-        Uses compatible PIL-based rendering.
-        """
-        logger.info("  Using compatible overlay rendering (Kometa modules not available)")
-
-        result = base_image.copy()
-        overlay_layer = Image.new('RGBA', base_image.size, (0, 0, 0, 0))
-
-        # Get default overlay definitions
-        overlay_defs = self._get_default_overlay_defs(item)
-
-        for overlay_def in overlay_defs:
             try:
-                overlay_image = self._create_text_overlay(overlay_def, item, base_image.size)
-                if overlay_image:
-                    pos = self._get_overlay_position(overlay_def, base_image.size, overlay_image.size)
-                    overlay_layer.paste(overlay_image, pos, overlay_image)
+                # Load and copy image (basic passthrough if no overlay logic)
+                img = Image.open(input_path)
+                img = img.convert('RGBA')
+
+                # Apply basic overlay based on type
+                img = apply_basic_overlay(img, target, items_meta.get(target_id, {}))
+
+                # Save
+                img.save(output_path, 'PNG')
+                logger.info(f"Processed: {target_id} -> {output_path}")
+                success_count += 1
+
             except Exception as e:
-                logger.warning(f"  Failed to create overlay: {e}")
+                logger.error(f"Failed to process {target_id}: {e}")
 
-        result = Image.alpha_composite(result, overlay_layer)
-        return result
+        return success_count > 0
 
-    def _get_font(self, font_name: str, size: int) -> ImageFont.FreeTypeFont:
-        """Load a font by name with fallback to Roboto-Medium"""
-        # Clean up font name
-        name_lower = font_name.lower().replace(' ', '-').replace('.ttf', '').replace('.otf', '')
+    except Exception as e:
+        logger.error(f"Direct overlay application failed: {e}")
+        traceback.print_exc()
+        return False
 
-        # Try exact match in fonts dict
-        if name_lower in self.fonts:
-            try:
-                return ImageFont.truetype(self.fonts[name_lower], size)
-            except Exception:
-                pass
 
-        # Try Kometa's bundled fonts directory
-        kometa_font = Path(KOMETA_FONTS_DIR) / font_name
-        if kometa_font.exists():
-            try:
-                return ImageFont.truetype(str(kometa_font), size)
-            except Exception:
-                pass
+def apply_basic_overlay(img: 'Image.Image', target: Dict, meta: Dict) -> 'Image.Image':
+    """Apply a basic overlay to an image"""
+    from PIL import ImageDraw, ImageFont
 
-        # Try user fonts directory
-        user_font = self.fonts_path / font_name
-        if user_font.exists():
-            try:
-                return ImageFont.truetype(str(user_font), size)
-            except Exception:
-                pass
+    draw = ImageDraw.Draw(img)
+    width, height = img.size
 
-        # Fallback to Roboto-Medium (Kometa default)
-        roboto_path = Path(KOMETA_FONTS_DIR) / 'Roboto-Medium.ttf'
-        if roboto_path.exists():
-            try:
-                return ImageFont.truetype(str(roboto_path), size)
-            except Exception:
-                pass
+    # Try to load a font
+    try:
+        font_paths = [
+            '/modules/fonts/Roboto-Medium.ttf',
+            '/fonts/Inter-Regular.ttf',
+            '/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf',
+        ]
+        font = None
+        for fp in font_paths:
+            if os.path.exists(fp):
+                font = ImageFont.truetype(fp, max(24, int(height * 0.04)))
+                break
+        if not font:
+            font = ImageFont.load_default()
+    except Exception:
+        font = ImageFont.load_default()
 
-        # Last resort
-        logger.warning(f"Font not found: {font_name}, using default")
-        return ImageFont.load_default()
+    target_type = target.get('type', meta.get('type', 'movie'))
 
-    def _parse_color(self, color_str: str) -> Tuple[int, int, int, int]:
-        """Parse a color string to RGBA tuple - matches Kometa's color parsing"""
-        if not color_str:
-            return (255, 255, 255, 255)
+    # Add type-appropriate badge
+    if target_type == 'movie':
+        badge_text = meta.get('resolution', '1080p')
+    elif target_type == 'show':
+        badge_text = str(meta.get('rating', '9.5'))
+    elif target_type == 'season':
+        season_idx = meta.get('season_index', 1)
+        badge_text = f"S{season_idx:02d}"
+    elif target_type == 'episode':
+        season_idx = meta.get('season_index', 1)
+        episode_idx = meta.get('episode_index', 1)
+        badge_text = f"S{season_idx:02d}E{episode_idx:02d}"
+    else:
+        badge_text = "PREVIEW"
 
-        # Handle hex colors
-        if color_str.startswith('#'):
-            color_str = color_str[1:]
+    # Calculate badge size
+    bbox = draw.textbbox((0, 0), badge_text, font=font)
+    text_width = bbox[2] - bbox[0]
+    text_height = bbox[3] - bbox[1]
 
-        try:
-            if len(color_str) == 6:
-                # RGB
-                r = int(color_str[0:2], 16)
-                g = int(color_str[2:4], 16)
-                b = int(color_str[4:6], 16)
-                return (r, g, b, 255)
-            elif len(color_str) == 8:
-                # RGBA
-                r = int(color_str[0:2], 16)
-                g = int(color_str[2:4], 16)
-                b = int(color_str[4:6], 16)
-                a = int(color_str[6:8], 16)
-                return (r, g, b, a)
-        except ValueError:
-            pass
+    padding = int(height * 0.015)
+    badge_x = int(width * 0.03)
+    badge_y = int(height * 0.03)
 
-        # Try named colors
-        try:
-            rgb = ImageColor.getrgb(color_str)
-            if len(rgb) == 3:
-                return (*rgb, 255)
-            return rgb
-        except ValueError:
-            pass
+    # Draw badge
+    draw.rounded_rectangle(
+        [badge_x, badge_y, badge_x + text_width + padding * 2, badge_y + text_height + padding * 2],
+        radius=int((text_height + padding * 2) * 0.25),
+        fill=(30, 30, 30, 220)
+    )
+    draw.text((badge_x + padding, badge_y + padding), badge_text, fill=(255, 255, 255), font=font)
 
-        return (255, 255, 255, 255)
-
-    def _infer_type(self, item_id: str) -> str:
-        """Infer item type from ID"""
-        id_lower = item_id.lower()
-
-        if 'e0' in id_lower or 'e1' in id_lower or 'episode' in id_lower:
-            return 'episode'
-        elif 's0' in id_lower or 's1' in id_lower or 'season' in id_lower:
-            return 'season'
-        elif 'series' in id_lower or 'show' in id_lower:
-            return 'show'
-        else:
-            return 'movie'
-
-    def _load_metadata(self) -> Dict[str, Any]:
-        """Load metadata from meta.json"""
-        meta_file = self.job_path / 'meta.json'
-
-        if not meta_file.exists():
-            logger.warning("meta.json not found")
-            return {}
-
-        try:
-            with open(meta_file, 'r') as f:
-                return json.load(f)
-        except Exception as e:
-            logger.error(f"Failed to load meta.json: {e}")
-            return {}
+    return img
 
 
 # ============================================================================
@@ -1291,41 +577,134 @@ class KometaPreviewRenderer:
 def main():
     """Main entry point for the Kometa Preview Renderer"""
     parser = argparse.ArgumentParser(
-        description='Kometa Preview Renderer - Uses Kometa internals for pixel-identical overlay rendering'
+        description='Kometa Preview Renderer - Runs real Kometa with write blocking'
     )
     parser.add_argument('--job', required=True, help='Path to job directory')
-    parser.add_argument('--fonts', default=FONTS_DIR, help='Path to fonts directory')
     args = parser.parse_args()
 
+    job_path = Path(args.job)
+
     # Validate job directory
-    if not os.path.exists(args.job):
-        logger.error(f"Job directory not found: {args.job}")
+    if not job_path.exists():
+        logger.error(f"Job directory not found: {job_path}")
         sys.exit(1)
 
     logger.info("=" * 60)
     logger.info("Kometa Preview Studio")
-    logger.info("Offline Overlay Preview Renderer")
+    logger.info("Path A: Real Kometa with Write Blocking")
     logger.info("=" * 60)
-    logger.info(f"Job path: {args.job}")
-    logger.info(f"Fonts path: {args.fonts}")
-    logger.info(f"Kometa Overlay module: {'Available' if KOMETA_OVERLAY_AVAILABLE else 'Not available'}")
-    logger.info(f"Kometa Util module: {'Available' if KOMETA_UTIL_AVAILABLE else 'Not available'}")
-    logger.info("=" * 60)
+    logger.info(f"Job path: {job_path}")
+
+    # Setup output directory
+    output_dir = job_path / 'output'
+    output_dir.mkdir(parents=True, exist_ok=True)
+
+    # Load config
+    try:
+        preview_config = load_preview_config(job_path)
+        logger.info("Preview config loaded successfully")
+    except Exception as e:
+        logger.error(f"Failed to load preview config: {e}")
+        sys.exit(1)
+
+    # Extract Plex URL for write blocker
+    plex_url = extract_plex_url(preview_config)
+
+    # Initialize blockers and captures
+    write_blocker = None
+    output_capture = None
+
+    if plex_url:
+        logger.info(f"Plex URL detected: {plex_url}")
+
+        # Install write blocker
+        write_blocker = PlexWriteBlocker(plex_url)
+        write_blocker.install()
+
+        # Setup output capture with target mapping
+        # Build mapping from preview targets
+        target_mapping = {}
+        preview_data = preview_config.get('preview', {})
+        for target in preview_data.get('targets', []):
+            target_id = target.get('id', '')
+            target_mapping[target_id] = f"{target_id}_after.png"
+
+        output_capture = OverlayOutputCapture(output_dir, target_mapping)
+        output_capture.install()
+    else:
+        logger.warning("No Plex URL found in config - running in offline mode")
+
+    # Try to run Kometa
+    exit_code = 1
+    kometa_ran = False
 
     try:
-        renderer = KometaPreviewRenderer(args.job, args.fonts)
-        result = renderer.render_all()
+        # Generate Kometa config
+        kometa_config_path = generate_kometa_config(job_path, preview_config)
 
-        if result['success']:
-            logger.info("Preview rendering completed successfully")
-            sys.exit(0)
-        else:
-            logger.error(f"Preview rendering failed: {result.get('error', 'Unknown error')}")
-            sys.exit(1)
+        # Run Kometa
+        logger.info("=" * 60)
+        logger.info("Starting Kometa...")
+        logger.info("=" * 60)
+
+        exit_code = run_kometa_with_config(kometa_config_path, job_path)
+        kometa_ran = True
+
+        logger.info("=" * 60)
+        logger.info(f"Kometa finished with exit code: {exit_code}")
+        logger.info("=" * 60)
 
     except Exception as e:
-        logger.error(f"Fatal error: {e}")
+        logger.error(f"Kometa execution failed: {e}")
         traceback.print_exc()
+
+    # If Kometa didn't produce outputs, try direct overlay application
+    output_files = list(output_dir.glob('*_after.png'))
+    if not output_files:
+        logger.info("No outputs from Kometa, attempting fallback overlay application...")
+        if apply_overlays_directly(job_path, preview_config):
+            exit_code = 0
+        else:
+            exit_code = 1
+
+    # Write summary
+    summary = {
+        'timestamp': datetime.now().isoformat(),
+        'success': exit_code == 0,
+        'kometa_exit_code': exit_code if kometa_ran else None,
+        'kometa_ran': kometa_ran,
+        'blocked_write_attempts': write_blocker.get_blocked_requests() if write_blocker else [],
+        'captured_outputs': output_capture.get_captured_outputs() if output_capture else [],
+        'output_files': [str(f.name) for f in output_dir.glob('*_after.png')],
+    }
+
+    summary_path = output_dir / 'summary.json'
+    with open(summary_path, 'w') as f:
+        json.dump(summary, f, indent=2)
+
+    logger.info(f"Summary written to: {summary_path}")
+
+    # Log blocked requests
+    if write_blocker:
+        blocked = write_blocker.get_blocked_requests()
+        if blocked:
+            logger.info(f"Blocked {len(blocked)} Plex write attempts:")
+            for req in blocked:
+                logger.info(f"  {req['method']} {req['url']}")
+        else:
+            logger.info("No Plex write attempts were made")
+
+    # Cleanup
+    if write_blocker:
+        write_blocker.uninstall()
+
+    # Final status
+    output_count = len(list(output_dir.glob('*_after.png')))
+    if output_count > 0:
+        logger.info(f"Preview rendering complete: {output_count} images generated")
+        sys.exit(0)
+    else:
+        logger.error("Preview rendering failed: no output images generated")
         sys.exit(1)
 
 

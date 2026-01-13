@@ -189,22 +189,27 @@ The preview renderer is based on the official Kometa Docker image (`kometateam/k
 
 4. **Future compatibility**: As Kometa's overlay system evolves, updates to the pinned version will automatically incorporate improvements.
 
-### Preview Renderer Architecture
+### Preview Renderer Architecture (Path A)
 
-The preview renderer (`renderer/preview_entrypoint.py`) uses Kometa's internal overlay pipeline to render overlays on local images:
+The preview renderer runs **real Kometa** with write blocking to produce pixel-identical outputs:
 
 ```
 ┌──────────────────────────────────────────────────────────────┐
 │                     preview_entrypoint.py                     │
 ├──────────────────────────────────────────────────────────────┤
-│  1. Load preview.yml (overlay definitions from user config)   │
-│  2. Load meta.json (item metadata: type, resolution, etc.)   │
-│  3. For each input image:                                     │
-│     - Create MockItem simulating Plex item                   │
-│     - Parse overlay YAML using Kometa semantics              │
-│     - Apply overlays using Kometa-compatible rendering       │
-│     - Save to /jobs/<id>/output/<item>_after.png             │
-│  4. Write summary.json with results                          │
+│  1. Install PlexWriteBlocker (monkeypatch requests)          │
+│     - Block PUT/POST/DELETE/PATCH to Plex URL                │
+│     - Log all blocked write attempts                         │
+│                                                               │
+│  2. Install OverlayOutputCapture                             │
+│     - Patch upload_poster() to copy files instead            │
+│     - Save rendered images to /jobs/<id>/output/             │
+│                                                               │
+│  3. Run real Kometa via subprocess                           │
+│     - Uses generated kometa_config.yml with Plex credentials │
+│     - Streams stdout/stderr for SSE logging                  │
+│                                                               │
+│  4. Write summary.json with blocked attempts and outputs     │
 └──────────────────────────────────────────────────────────────┘
 ```
 
@@ -212,10 +217,10 @@ The preview renderer (`renderer/preview_entrypoint.py`) uses Kometa's internal o
 
 | Feature | Normal Kometa | Preview Mode |
 |---------|--------------|--------------|
-| Plex connection | Required | Not used |
-| Artwork source | Plex server | Local files |
-| Metadata updates | Yes (labels, posters) | No |
-| Network access | Required | Disabled |
+| Plex connection | Read/Write | Read-only (writes blocked) |
+| Artwork source | Plex server | Local files + Plex read |
+| Metadata updates | Yes (labels, posters) | No (blocked) |
+| Network for Plex | Full access | GET requests only |
 
 For more technical details, see [renderer/PREVIEW_MODE.md](renderer/PREVIEW_MODE.md).
 
