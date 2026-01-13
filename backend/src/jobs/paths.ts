@@ -1,17 +1,34 @@
 import * as path from 'path';
 
 /**
- * Get the base path for jobs directory
+ * Get the base path for jobs directory (inside container)
  */
 export function getJobsBasePath(): string {
   return process.env.JOBS_PATH || path.resolve(__dirname, '../../../jobs');
 }
 
 /**
- * Get the fonts directory path
+ * Get the HOST path for jobs directory (for Docker volume mounts)
+ * When running in Docker, we need the host path to create bind mounts for child containers.
+ */
+export function getJobsHostPath(): string {
+  // JOBS_HOST_PATH should be set to the absolute host path of the jobs directory
+  // This is needed because Docker bind mounts require host paths, not container paths
+  return process.env.JOBS_HOST_PATH || process.env.JOBS_PATH || path.resolve(__dirname, '../../../jobs');
+}
+
+/**
+ * Get the fonts directory path (inside container)
  */
 export function getFontsPath(): string {
   return process.env.FONTS_PATH || path.resolve(__dirname, '../../../fonts');
+}
+
+/**
+ * Get the HOST path for fonts directory (for Docker volume mounts)
+ */
+export function getFontsHostPath(): string {
+  return process.env.FONTS_HOST_PATH || process.env.FONTS_PATH || path.resolve(__dirname, '../../../fonts');
 }
 
 /**

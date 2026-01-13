@@ -10,8 +10,13 @@ services:
       - PORT=3001
       - HOST=0.0.0.0
       - CORS_ORIGIN=http://localhost:5173
+      # Paths inside the backend container
       - JOBS_PATH=/app/jobs
       - FONTS_PATH=/app/fonts
+      # Host paths for Docker volume mounts (renderer containers need host paths)
+      # PWD is resolved by docker-compose to the directory containing docker-compose.yml
+      - JOBS_HOST_PATH=${PWD}/jobs
+      - FONTS_HOST_PATH=${PWD}/fonts
       # Kometa-based renderer image (built from ./renderer)
       - KOMETA_RENDERER_IMAGE=kometa-preview-renderer:latest
       # Pinned Kometa version for deterministic rendering
