@@ -16,8 +16,8 @@ import unittest
 import xml.etree.ElementTree as ET
 from pathlib import Path
 
-# Import the filtering functions from preview_entrypoint
-from preview_entrypoint import (
+# Import from refactored modules
+from xml_builders import (
     filter_media_container_xml,
     create_empty_media_container_xml,
     is_listing_endpoint,
@@ -25,21 +25,23 @@ from preview_entrypoint import (
     is_metadata_endpoint,
     extract_allowed_rating_keys,
     extract_preview_targets,
-    safe_preview_targets,
     # Mock library mode functions
     build_synthetic_library_sections_xml,
     build_synthetic_section_detail_xml,
+    build_synthetic_filter_types_xml,
     build_synthetic_listing_xml,
     build_synthetic_children_xml,
     is_library_sections_endpoint,
     is_children_endpoint,
+    is_filter_types_endpoint,
     extract_section_id,
     extract_search_query,
     extract_image_from_body,
-    sanitize_overlay_data_for_fast_mode,
-    TMDbProxyHandler,
-    generate_proxy_config,
 )
+from caching import safe_preview_targets
+from proxy_tmdb import TMDbProxyHandler
+from config import generate_proxy_config
+from sanitization import sanitize_overlay_data_for_fast_mode
 
 
 class TestFilterMediaContainerXML(unittest.TestCase):
@@ -1489,6 +1491,97 @@ class TestLibrarySectionType(unittest.TestCase):
         directory = root.find('Directory')
         self.assertIsNotNone(directory)
         self.assertEqual(directory.get('type'), 'movie')
+
+
+class TestFilterTypesEndpoint(unittest.TestCase):
+    """Tests for synthetic filterTypes endpoint - P0 fix for plex_search validation"""
+
+    def test_is_filter_types_endpoint_matches(self):
+        """filterTypes endpoint pattern should match correctly"""
+        self.assertEqual(is_filter_types_endpoint('/library/sections/1/filterTypes'), '1')
+        self.assertEqual(is_filter_types_endpoint('/library/sections/2/filterTypes'), '2')
+        self.assertEqual(is_filter_types_endpoint('/library/sections/123/filterTypes'), '123')
+        self.assertEqual(is_filter_types_endpoint('/library/sections/1/filterTypes?X-Plex-Token=abc'), '1')
+
+    def test_is_filter_types_endpoint_not_matches(self):
+        """filterTypes pattern should not match other endpoints"""
+        self.assertIsNone(is_filter_types_endpoint('/library/sections/1'))
+        self.assertIsNone(is_filter_types_endpoint('/library/sections/1/all'))
+        self.assertIsNone(is_filter_types_endpoint('/library/sections/1/filters'))
+        self.assertIsNone(is_filter_types_endpoint('/library/sections'))
+
+    def test_filter_types_movie_section(self):
+        """Movie section should return movie filter types with resolution filter"""
+        xml_bytes = build_synthetic_filter_types_xml('1', [{'type': 'movie'}])
+        root = ET.fromstring(xml_bytes)
+
+        # Should have Type element
+        type_elem = root.find('Type')
+        self.assertIsNotNone(type_elem)
+        self.assertEqual(type_elem.get('type'), 'movie')
+        self.assertEqual(type_elem.get('active'), '1')
+
+        # Should have Filter elements
+        filters = type_elem.findall('Filter')
+        self.assertGreater(len(filters), 0)
+
+        # Should include resolution filter (the main one for the P0 bug)
+        filter_keys = [f.get('filter') for f in filters]
+        self.assertIn('resolution', filter_keys)
+        self.assertIn('audioCodec', filter_keys)
+        self.assertIn('hdr', filter_keys)
+
+    def test_filter_types_show_section(self):
+        """Show section should return show filter types"""
+        xml_bytes = build_synthetic_filter_types_xml('2', [{'type': 'show'}])
+        root = ET.fromstring(xml_bytes)
+
+        # Should have show, season, episode types
+        types = root.findall('Type')
+        type_names = [t.get('type') for t in types]
+        self.assertIn('show', type_names)
+        self.assertIn('season', type_names)
+        self.assertIn('episode', type_names)
+
+        # Show type should have resolution filter
+        show_type = root.find("Type[@type='show']")
+        self.assertIsNotNone(show_type)
+        filters = show_type.findall('Filter')
+        filter_keys = [f.get('filter') for f in filters]
+        self.assertIn('resolution', filter_keys)
+
+    def test_filter_types_contains_required_attributes(self):
+        """Filter elements should have required attributes for plexapi"""
+        xml_bytes = build_synthetic_filter_types_xml('1', [{'type': 'movie'}])
+        root = ET.fromstring(xml_bytes)
+        type_elem = root.find('Type')
+        filters = type_elem.findall('Filter')
+
+        # Each filter should have: filter, filterType, key, title, type
+        for f in filters:
+            self.assertIsNotNone(f.get('filter'), 'Filter missing filter attribute')
+            self.assertIsNotNone(f.get('filterType'), 'Filter missing filterType attribute')
+            self.assertIsNotNone(f.get('key'), 'Filter missing key attribute')
+            self.assertIsNotNone(f.get('title'), 'Filter missing title attribute')
+            self.assertIsNotNone(f.get('type'), 'Filter missing type attribute')
+
+    def test_filter_types_resolution_has_correct_filter_type(self):
+        """Resolution filter should have filterType=string"""
+        xml_bytes = build_synthetic_filter_types_xml('1', [{'type': 'movie'}])
+        root = ET.fromstring(xml_bytes)
+        type_elem = root.find('Type')
+        resolution_filter = type_elem.find("Filter[@filter='resolution']")
+        self.assertIsNotNone(resolution_filter)
+        self.assertEqual(resolution_filter.get('filterType'), 'string')
+
+    def test_filter_types_hdr_has_correct_filter_type(self):
+        """HDR filter should have filterType=boolean"""
+        xml_bytes = build_synthetic_filter_types_xml('1', [{'type': 'movie'}])
+        root = ET.fromstring(xml_bytes)
+        type_elem = root.find('Type')
+        hdr_filter = type_elem.find("Filter[@filter='hdr']")
+        self.assertIsNotNone(hdr_filter)
+        self.assertEqual(hdr_filter.get('filterType'), 'boolean')
 
 
 class TestUploadCaptureParsing(unittest.TestCase):

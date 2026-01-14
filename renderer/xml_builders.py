@@ -19,6 +19,7 @@ from constants import (
     LIBRARY_SECTION_DETAIL_PATTERN,
     SECTION_ID_PATTERN,
     CHILDREN_PATTERN,
+    LIBRARY_FILTER_TYPES_PATTERN,
 )
 
 
@@ -280,6 +281,154 @@ def build_synthetic_section_detail_xml(section_id: str, targets: List[Dict[str, 
         'hidden': '0',
         'location': f'id={section_id}',
     })
+
+    return ET.tostring(root, encoding='unicode').encode('utf-8')
+
+
+def build_synthetic_filter_types_xml(section_id: str, targets: List[Dict[str, Any]]) -> bytes:
+    """
+    Build synthetic /library/sections/{id}/filterTypes XML response.
+
+    This endpoint is called by plexapi.library.listFilters() when Kometa uses
+    plex_search with attributes like resolution, audio_codec, hdr, etc.
+
+    The response format matches what plexapi expects in getFilterType():
+    - MediaContainer with Type elements (one per libtype: movie, show, etc.)
+    - Each Type contains Filter elements describing available filters
+
+    Args:
+        section_id: The requested section ID
+        targets: List of preview targets to determine the library type
+
+    Returns:
+        XML bytes for MediaContainer with Type and Filter elements
+    """
+    # Determine section type based on targets
+    has_movies = any(t.get('type') in ('movie', 'movies') for t in targets)
+    has_shows = any(t.get('type') in ('show', 'shows', 'series', 'season', 'episode') for t in targets)
+
+    # Build the MediaContainer
+    root = ET.Element('MediaContainer', {
+        'size': '1',
+        'allowSync': '0',
+        'identifier': 'com.plexapp.plugins.library',
+    })
+
+    # Common movie filters (used by Kometa's plex_search)
+    movie_filters = [
+        {'filter': 'resolution', 'filterType': 'string', 'key': 'resolution', 'title': 'Resolution', 'type': 'filter'},
+        {'filter': 'audioCodec', 'filterType': 'string', 'key': 'audioCodec', 'title': 'Audio Codec', 'type': 'filter'},
+        {'filter': 'videoCodec', 'filterType': 'string', 'key': 'videoCodec', 'title': 'Video Codec', 'type': 'filter'},
+        {'filter': 'audioChannels', 'filterType': 'integer', 'key': 'audioChannels', 'title': 'Audio Channels', 'type': 'filter'},
+        {'filter': 'videoFrameRate', 'filterType': 'string', 'key': 'videoFrameRate', 'title': 'Frame Rate', 'type': 'filter'},
+        {'filter': 'container', 'filterType': 'string', 'key': 'container', 'title': 'Container', 'type': 'filter'},
+        {'filter': 'hdr', 'filterType': 'boolean', 'key': 'hdr', 'title': 'HDR', 'type': 'filter'},
+        {'filter': 'unmatched', 'filterType': 'boolean', 'key': 'unmatched', 'title': 'Unmatched', 'type': 'filter'},
+        {'filter': 'inProgress', 'filterType': 'boolean', 'key': 'inProgress', 'title': 'In Progress', 'type': 'filter'},
+        {'filter': 'unwatched', 'filterType': 'boolean', 'key': 'unwatched', 'title': 'Unwatched', 'type': 'filter'},
+        {'filter': 'year', 'filterType': 'integer', 'key': 'year', 'title': 'Year', 'type': 'filter'},
+        {'filter': 'decade', 'filterType': 'integer', 'key': 'decade', 'title': 'Decade', 'type': 'filter'},
+        {'filter': 'genre', 'filterType': 'string', 'key': 'genre', 'title': 'Genre', 'type': 'filter'},
+        {'filter': 'contentRating', 'filterType': 'string', 'key': 'contentRating', 'title': 'Content Rating', 'type': 'filter'},
+        {'filter': 'collection', 'filterType': 'string', 'key': 'collection', 'title': 'Collection', 'type': 'filter'},
+        {'filter': 'director', 'filterType': 'string', 'key': 'director', 'title': 'Director', 'type': 'filter'},
+        {'filter': 'actor', 'filterType': 'string', 'key': 'actor', 'title': 'Actor', 'type': 'filter'},
+        {'filter': 'studio', 'filterType': 'string', 'key': 'studio', 'title': 'Studio', 'type': 'filter'},
+        {'filter': 'country', 'filterType': 'string', 'key': 'country', 'title': 'Country', 'type': 'filter'},
+        {'filter': 'addedAt', 'filterType': 'date', 'key': 'addedAt', 'title': 'Date Added', 'type': 'filter'},
+        {'filter': 'originallyAvailableAt', 'filterType': 'date', 'key': 'originallyAvailableAt', 'title': 'Release Date', 'type': 'filter'},
+        {'filter': 'duration', 'filterType': 'integer', 'key': 'duration', 'title': 'Duration', 'type': 'filter'},
+        {'filter': 'audienceRating', 'filterType': 'integer', 'key': 'audienceRating', 'title': 'Audience Rating', 'type': 'filter'},
+        {'filter': 'rating', 'filterType': 'integer', 'key': 'rating', 'title': 'Critic Rating', 'type': 'filter'},
+    ]
+
+    # Common show filters
+    show_filters = [
+        {'filter': 'resolution', 'filterType': 'string', 'key': 'resolution', 'title': 'Resolution', 'type': 'filter'},
+        {'filter': 'audioCodec', 'filterType': 'string', 'key': 'audioCodec', 'title': 'Audio Codec', 'type': 'filter'},
+        {'filter': 'videoCodec', 'filterType': 'string', 'key': 'videoCodec', 'title': 'Video Codec', 'type': 'filter'},
+        {'filter': 'hdr', 'filterType': 'boolean', 'key': 'hdr', 'title': 'HDR', 'type': 'filter'},
+        {'filter': 'unmatched', 'filterType': 'boolean', 'key': 'unmatched', 'title': 'Unmatched', 'type': 'filter'},
+        {'filter': 'inProgress', 'filterType': 'boolean', 'key': 'inProgress', 'title': 'In Progress', 'type': 'filter'},
+        {'filter': 'unwatched', 'filterType': 'boolean', 'key': 'unwatched', 'title': 'Unwatched', 'type': 'filter'},
+        {'filter': 'year', 'filterType': 'integer', 'key': 'year', 'title': 'Year', 'type': 'filter'},
+        {'filter': 'genre', 'filterType': 'string', 'key': 'genre', 'title': 'Genre', 'type': 'filter'},
+        {'filter': 'contentRating', 'filterType': 'string', 'key': 'contentRating', 'title': 'Content Rating', 'type': 'filter'},
+        {'filter': 'collection', 'filterType': 'string', 'key': 'collection', 'title': 'Collection', 'type': 'filter'},
+        {'filter': 'network', 'filterType': 'string', 'key': 'network', 'title': 'Network', 'type': 'filter'},
+        {'filter': 'actor', 'filterType': 'string', 'key': 'actor', 'title': 'Actor', 'type': 'filter'},
+        {'filter': 'studio', 'filterType': 'string', 'key': 'studio', 'title': 'Studio', 'type': 'filter'},
+        {'filter': 'country', 'filterType': 'string', 'key': 'country', 'title': 'Country', 'type': 'filter'},
+        {'filter': 'addedAt', 'filterType': 'date', 'key': 'addedAt', 'title': 'Date Added', 'type': 'filter'},
+        {'filter': 'originallyAvailableAt', 'filterType': 'date', 'key': 'originallyAvailableAt', 'title': 'First Aired', 'type': 'filter'},
+        {'filter': 'unviewedLeafCount', 'filterType': 'integer', 'key': 'unviewedLeafCount', 'title': 'Unplayed Episodes', 'type': 'filter'},
+    ]
+
+    # Season filters (subset of show filters)
+    season_filters = [
+        {'filter': 'resolution', 'filterType': 'string', 'key': 'resolution', 'title': 'Resolution', 'type': 'filter'},
+        {'filter': 'audioCodec', 'filterType': 'string', 'key': 'audioCodec', 'title': 'Audio Codec', 'type': 'filter'},
+        {'filter': 'videoCodec', 'filterType': 'string', 'key': 'videoCodec', 'title': 'Video Codec', 'type': 'filter'},
+        {'filter': 'hdr', 'filterType': 'boolean', 'key': 'hdr', 'title': 'HDR', 'type': 'filter'},
+        {'filter': 'unwatched', 'filterType': 'boolean', 'key': 'unwatched', 'title': 'Unwatched', 'type': 'filter'},
+    ]
+
+    # Episode filters
+    episode_filters = [
+        {'filter': 'resolution', 'filterType': 'string', 'key': 'resolution', 'title': 'Resolution', 'type': 'filter'},
+        {'filter': 'audioCodec', 'filterType': 'string', 'key': 'audioCodec', 'title': 'Audio Codec', 'type': 'filter'},
+        {'filter': 'videoCodec', 'filterType': 'string', 'key': 'videoCodec', 'title': 'Video Codec', 'type': 'filter'},
+        {'filter': 'hdr', 'filterType': 'boolean', 'key': 'hdr', 'title': 'HDR', 'type': 'filter'},
+        {'filter': 'unwatched', 'filterType': 'boolean', 'key': 'unwatched', 'title': 'Unwatched', 'type': 'filter'},
+        {'filter': 'year', 'filterType': 'integer', 'key': 'year', 'title': 'Year', 'type': 'filter'},
+        {'filter': 'originallyAvailableAt', 'filterType': 'date', 'key': 'originallyAvailableAt', 'title': 'Air Date', 'type': 'filter'},
+    ]
+
+    # Add movie type if we have movies
+    if section_id == '1' or (has_movies and not has_shows):
+        movie_type = ET.SubElement(root, 'Type', {
+            'key': '1',
+            'type': 'movie',
+            'title': 'Movie',
+            'active': '1',
+        })
+        for f in movie_filters:
+            ET.SubElement(movie_type, 'Filter', f)
+
+    # Add show types if we have shows
+    if section_id == '2' or (has_shows and not has_movies):
+        # Show type
+        show_type = ET.SubElement(root, 'Type', {
+            'key': '2',
+            'type': 'show',
+            'title': 'Show',
+            'active': '1',
+        })
+        for f in show_filters:
+            ET.SubElement(show_type, 'Filter', f)
+
+        # Season type
+        season_type = ET.SubElement(root, 'Type', {
+            'key': '3',
+            'type': 'season',
+            'title': 'Season',
+            'active': '0',
+        })
+        for f in season_filters:
+            ET.SubElement(season_type, 'Filter', f)
+
+        # Episode type
+        episode_type = ET.SubElement(root, 'Type', {
+            'key': '4',
+            'type': 'episode',
+            'title': 'Episode',
+            'active': '0',
+        })
+        for f in episode_filters:
+            ET.SubElement(episode_type, 'Filter', f)
+
+        # Update size to reflect number of types
+        root.set('size', '3')
 
     return ET.tostring(root, encoding='unicode').encode('utf-8')
 
@@ -722,6 +871,20 @@ def is_children_endpoint(path: str) -> Optional[str]:
     """
     path_base = path.split('?')[0]
     match = CHILDREN_PATTERN.match(path_base)
+    return match.group(1) if match else None
+
+
+def is_filter_types_endpoint(path: str) -> Optional[str]:
+    """
+    Check if path is /library/sections/{id}/filterTypes.
+
+    This endpoint is called by plexapi.library.listFilters() when Kometa
+    uses plex_search with attributes like resolution, audio_codec, etc.
+
+    Returns the section ID if matched, None otherwise.
+    """
+    path_base = path.split('?')[0]
+    match = LIBRARY_FILTER_TYPES_PATTERN.match(path_base)
     return match.group(1) if match else None
 
 

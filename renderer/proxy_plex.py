@@ -33,11 +33,13 @@ from xml_builders import (
     is_library_sections_endpoint,
     is_library_section_detail_endpoint,
     is_children_endpoint,
+    is_filter_types_endpoint,
     extract_rating_key_from_path,
     extract_section_id,
     extract_search_query,
     build_synthetic_library_sections_xml,
     build_synthetic_section_detail_xml,
+    build_synthetic_filter_types_xml,
     build_synthetic_listing_xml,
     build_synthetic_children_xml,
     extract_image_from_body,
@@ -137,13 +139,15 @@ class PlexProxyHandler(BaseHTTPRequestHandler):
         is_listing = is_listing_endpoint(path)
         is_meta = is_metadata_endpoint(path)
         is_sections = is_library_sections_endpoint(path)
+        filter_types_section_id = is_filter_types_endpoint(path)
         section_detail_id = is_library_section_detail_endpoint(path)
         children_parent = is_children_endpoint(path)
 
         logger.info(
             f"PROXY_GET path={path_base} is_listing={is_listing} "
             f"is_metadata={is_meta} is_sections={is_sections} "
-            f"section_detail={section_detail_id is not None}"
+            f"section_detail={section_detail_id is not None} "
+            f"filter_types={filter_types_section_id is not None}"
         )
 
         # Mock library mode: return synthetic XML for listing endpoints
@@ -151,6 +155,13 @@ class PlexProxyHandler(BaseHTTPRequestHandler):
             # Handle /library/sections endpoint
             if is_sections:
                 self._handle_mock_sections()
+                return
+
+            # Handle /library/sections/{id}/filterTypes - P0 fix for plex_search validation
+            # This must be checked BEFORE section_detail to avoid matching the more general pattern
+            # Fixes "Unknown libtype 'movie' ... Available libtypes: ['collection']" error
+            if filter_types_section_id:
+                self._handle_mock_filter_types(filter_types_section_id)
                 return
 
             # Handle /library/sections/{id} (specific section detail) - P0 libtype fix
@@ -484,6 +495,45 @@ class PlexProxyHandler(BaseHTTPRequestHandler):
                 'type': 'section_detail',
                 'section_id': section_id,
                 'section_type': section_type,
+                'timestamp': datetime.now().isoformat()
+            })
+
+        self._send_xml_response(xml_bytes)
+
+    def _handle_mock_filter_types(self, section_id: str):
+        """
+        Handle /library/sections/{id}/filterTypes in mock mode.
+
+        P0 Fix: This provides synthetic filter type definitions matching the mocked
+        library type, allowing Kometa's plex_search with resolution, audio_codec,
+        hdr, etc. to validate successfully.
+
+        Without this, plexapi.library.listFilters() forwards to real Plex, which
+        may have a different library at that section ID, causing:
+        "Unknown libtype 'movie' for this library. Available libtypes: ['collection']"
+        """
+        xml_bytes = build_synthetic_filter_types_xml(section_id, self.preview_targets)
+
+        # Debug logging
+        if DEBUG_MOCK_XML:
+            logger.debug(f"MOCK_FILTER_TYPES_XML: {xml_bytes[:500].decode('utf-8', errors='replace')}")
+
+        # Parse to get filter type count
+        filter_type_count = 0
+        try:
+            root = ET.fromstring(xml_bytes)
+            filter_type_count = len(list(root))
+        except Exception:
+            pass
+
+        logger.info(f"MOCK_FILTER_TYPES section_id={section_id} type_count={filter_type_count}")
+
+        with self.data_lock:
+            self.mock_list_requests.append({
+                'path': f'/library/sections/{section_id}/filterTypes',
+                'type': 'filter_types',
+                'section_id': section_id,
+                'type_count': filter_type_count,
                 'timestamp': datetime.now().isoformat()
             })
 

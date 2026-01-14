@@ -150,6 +150,10 @@ SECTION_ID_PATTERN = re.compile(r'^/library/sections/(\d+)/')
 # Children endpoint pattern (for getting seasons of a show, episodes of a season)
 CHILDREN_PATTERN = re.compile(r'^/library/metadata/(\d+)/children(?:\?.*)?$')
 
+# Filter types endpoint pattern - used by plexapi.library.listFilters()
+# This is called when Kometa uses plex_search with attributes like resolution, audio_codec, etc.
+LIBRARY_FILTER_TYPES_PATTERN = re.compile(r'^/library/sections/(\d+)/filterTypes(?:\?.*)?$')
+
 # ============================================================================
 # TMDb API Patterns
 # ============================================================================
