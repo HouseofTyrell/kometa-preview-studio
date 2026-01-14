@@ -194,9 +194,22 @@ def main():
         rk = t.get('ratingKey') or t.get('rating_key') or 'MISSING'
         logger.info(f"  - {t.get('id')}: ratingKey={rk}")
 
+    # CRITICAL: The ratingKeys are essential for proxy filtering performance.
+    # Without them, the proxy cannot intercept Plex library requests and return only
+    # the preview targets. Kometa would then scan the entire library (2000+ items),
+    # turning a 30-second preview into a 15+ minute operation.
+    #
+    # This should normally never happen because the backend validates ratingKeys
+    # before starting the renderer. If we get here with empty ratingKeys, something
+    # bypassed that validation or the config was manually created.
     if not allowed_rating_keys:
-        logger.warning("No ratingKeys found in preview targets - filtering will be DISABLED")
-        logger.warning("Kometa will process ALL library items (may be slow)")
+        logger.error("=" * 60)
+        logger.error("CRITICAL: No ratingKeys found in preview targets!")
+        logger.error("Proxy filtering is DISABLED - Kometa will scan your ENTIRE library.")
+        logger.error("This will be extremely slow (15+ minutes for large libraries).")
+        logger.error("This usually means the backend validation was bypassed.")
+        logger.error("Check that preview targets exist in your Plex library.")
+        logger.error("=" * 60)
     else:
         logger.info(f"Proxy will only expose {len(allowed_rating_keys)} items to Kometa")
 

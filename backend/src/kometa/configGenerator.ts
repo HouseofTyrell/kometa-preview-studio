@@ -157,8 +157,13 @@ function buildKometaConfig(
 
         // Only include library if it has overlays after filtering
         if (overlayFiles.length > 0) {
-          // Only include overlay_files - omit operations/collections/metadata
-          // to avoid Kometa validation errors about empty definitions
+          // CRITICAL: Only include overlay_files here. Do NOT add operations, collections,
+          // or metadata keys (even as null/empty). Kometa's config validator rejects configs
+          // that have these keys present in the main config file - it expects them to be in
+          // external YAML files. Including them causes the error:
+          //   "The 'Movies' library config contains collections definitions.
+          //    These belong in external YAML files, not in the config.yml."
+          // This validation error was causing jobs to fail at the Kometa config parsing stage.
           libraries[libName] = {
             overlay_files: overlayFiles,
           };

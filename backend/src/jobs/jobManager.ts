@@ -166,10 +166,14 @@ class JobManager extends EventEmitter {
       });
 
       // Create Plex client
+      // CRITICAL: Kometa/Plex configs specify timeout in SECONDS, but PlexClient uses MILLISECONDS.
+      // Without this conversion, a config with "timeout: 60" would be interpreted as 60ms instead
+      // of 60 seconds, causing immediate timeouts when searching for movies in Plex.
+      // This bug caused all Plex searches to fail with "Plex request timeout" errors.
       const plexClient = new PlexClient({
         url: analysis.plexUrl!,
         token: config.plex!.token!,
-        timeout: config.plex?.timeout,
+        timeout: config.plex?.timeout ? config.plex.timeout * 1000 : undefined,
       });
 
       // Test connection
@@ -193,6 +197,34 @@ class JobManager extends EventEmitter {
 
       if (targets.length === 0) {
         throw new Error('No targets selected for preview. Please select at least one target or media type.');
+      }
+
+      // CRITICAL: Validate that all targets have ratingKeys from Plex.
+      // The ratingKey is essential for the Plex proxy filtering in the renderer container.
+      // Without valid ratingKeys, the proxy cannot filter library responses, causing Kometa
+      // to scan the ENTIRE Plex library (e.g., 2000+ movies) instead of just the 2-5 preview
+      // targets. This turns a 30-second preview into a 15+ minute operation.
+      //
+      // If targets don't have ratingKeys, it means either:
+      // 1. The movies don't exist in the user's Plex library
+      // 2. The Plex search failed (timeout, connection issue, etc.)
+      // 3. The search title didn't match any items
+      //
+      // We fail fast here to avoid wasting time on an unfiltered Kometa run.
+      const targetsWithoutRatingKey = targets.filter(t => !t.ratingKey);
+      if (targetsWithoutRatingKey.length > 0) {
+        const missing = targetsWithoutRatingKey.map(t => `"${t.label}"`).join(', ');
+        // Collect warnings to help debug why items weren't found
+        const allWarnings = targetsWithoutRatingKey
+          .flatMap(t => t.warnings)
+          .filter(w => w);
+        const warningDetails = allWarnings.length > 0
+          ? ` Errors: ${allWarnings.join('; ')}`
+          : '';
+        throw new Error(
+          `Could not find the following items in your Plex library: ${missing}.${warningDetails} ` +
+          `Please ensure these titles exist in Plex and try again.`
+        );
       }
 
       this.emit(`job:${jobId}`, {

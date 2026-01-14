@@ -5,6 +5,8 @@ services:
       dockerfile: Dockerfile
     ports:
       - "3001:3001"
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
     environment:
       - NODE_ENV=production
       - PORT=3001
