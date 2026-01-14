@@ -1,0 +1,23 @@
+{
+  "version": "2.0.0",
+  "tasks": [
+    {
+      "label": "Start Kometa Preview Studio",
+      "type": "shell",
+      "command": "${workspaceFolder}\\scripts\\start.bat",
+      "problemMatcher": []
+    },
+    {
+      "label": "Stop Kometa Preview Studio",
+      "type": "shell",
+      "command": "${workspaceFolder}\\scripts\\stop.bat",
+      "problemMatcher": []
+    },
+    {
+      "label": "Reset Kometa Preview Studio",
+      "type": "shell",
+      "command": "${workspaceFolder}\\scripts\\reset.bat",
+      "problemMatcher": []
+    }
+  ]
+}

@@ -678,7 +678,7 @@ section details with the correct type based on preview targets:
 | Environment Variable | Default | Description |
 |---------------------|---------|-------------|
 | `PREVIEW_STRICT_FONTS` | `0` | If `1`, fail if fonts missing |
-| `PREVIEW_FALLBACK_FONT` | `/config/fonts/Inter-Regular.ttf` | Default fallback font |
+| `PREVIEW_FALLBACK_FONT` | `/fonts/Inter-Regular.ttf` | Default fallback font |
 
 ### Validation
 

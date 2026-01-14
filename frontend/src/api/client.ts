@@ -56,6 +56,18 @@ export interface JobEvent {
   progress?: number;
 }
 
+export type SystemAction = 'start' | 'stop' | 'reset';
+
+export interface SystemActionResult {
+  action: SystemAction;
+  status: 'success' | 'failed';
+  exitCode: number | null;
+  stdout: string;
+  stderr: string;
+  startedAt: string;
+  finishedAt: string;
+}
+
 /**
  * Upload or submit a Kometa config
  */
@@ -286,6 +298,22 @@ export async function checkHealth(): Promise<{ status: string; version: string }
 
   if (!response.ok) {
     throw new Error('Backend is not available');
+  }
+
+  return response.json();
+}
+
+/**
+ * Trigger a system action (start/stop/reset).
+ */
+export async function runSystemAction(action: SystemAction): Promise<SystemActionResult> {
+  const response = await fetch(`${API_BASE}/system/${action}`, {
+    method: 'POST',
+  });
+
+  if (!response.ok) {
+    const error = await response.json();
+    throw new Error(error.details || error.error || 'Failed to run system action');
   }
 
   return response.json();
