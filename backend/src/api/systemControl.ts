@@ -17,11 +17,20 @@ type ActionResponse = {
   finishedAt: string;
 };
 
-const actionScripts: Record<SystemAction, string> = {
-  start: 'start.ps1',
-  stop: 'stop.ps1',
-  reset: 'reset.ps1',
-};
+const isWindows = process.platform === 'win32';
+
+// Use PowerShell scripts on Windows, shell scripts on Linux/Mac
+const actionScripts: Record<SystemAction, string> = isWindows
+  ? {
+      start: 'start.ps1',
+      stop: 'stop.ps1',
+      reset: 'reset.ps1',
+    }
+  : {
+      start: 'start.sh',
+      stop: 'stop.sh',
+      reset: 'reset.sh',
+    };
 
 const scriptsDir = path.resolve(__dirname, '../../../scripts');
 
@@ -36,14 +45,19 @@ async function runScript(action: SystemAction): Promise<ActionResponse> {
   const stderrChunks: string[] = [];
 
   return new Promise((resolve, reject) => {
-    const child = spawn(
-      'powershell',
-      ['-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', scriptPath],
-      {
-        cwd: repoRoot,
-        windowsHide: true,
-      }
-    );
+    // Use PowerShell on Windows, bash on Linux/Mac
+    const child = isWindows
+      ? spawn(
+          'powershell',
+          ['-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', scriptPath],
+          {
+            cwd: repoRoot,
+            windowsHide: true,
+          }
+        )
+      : spawn('bash', [scriptPath], {
+          cwd: repoRoot,
+        });
 
     child.stdout.on('data', (data) => stdoutChunks.push(data.toString()));
     child.stderr.on('data', (data) => stderrChunks.push(data.toString()));
@@ -74,14 +88,6 @@ router.post('/system/:action', async (req, res) => {
     res.status(400).json({
       error: 'Invalid action',
       details: 'Supported actions are start, stop, and reset.',
-    });
-    return;
-  }
-
-  if (process.platform !== 'win32') {
-    res.status(400).json({
-      error: 'Unsupported platform',
-      details: 'System scripts are only supported on Windows hosts.',
     });
     return;
   }
