@@ -91,6 +91,46 @@ export async function createFromCredentials(
   return response.json();
 }
 
+export interface PlexLibrary {
+  key: string;
+  title: string;
+  type: string;
+}
+
+export interface PlexTestResult {
+  success: boolean;
+  libraries?: PlexLibrary[];
+  message?: string;
+  error?: string;
+}
+
+/**
+ * Test Plex connection and get libraries
+ */
+export async function testPlexConnection(
+  plexUrl: string,
+  plexToken: string
+): Promise<PlexTestResult> {
+  const response = await fetch(`${API_BASE}/plex/test`, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify({ plexUrl, plexToken }),
+  });
+
+  const data = await response.json();
+
+  if (!response.ok) {
+    return {
+      success: false,
+      error: data.error || 'Connection failed',
+    };
+  }
+
+  return data;
+}
+
 /**
  * Upload or submit a Kometa config
  */

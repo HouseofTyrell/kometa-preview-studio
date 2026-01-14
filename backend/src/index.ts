@@ -3,6 +3,7 @@ import cors from 'cors';
 import multer from 'multer';
 import * as path from 'path';
 import configRouter from './api/configUpload.js';
+import plexRouter from './api/plexApi.js';
 import previewStartRouter from './api/previewStart.js';
 import previewStatusRouter from './api/previewStatus.js';
 import previewArtifactsRouter from './api/previewArtifacts.js';
@@ -75,6 +76,7 @@ async function main() {
 
   // API routes
   app.use('/api/config', upload.single('config'), configRouter);
+  app.use('/api/plex', plexRouter);
   app.use('/api/preview', previewStartRouter);
   app.use('/api/preview', previewStatusRouter);
   app.use('/api/preview', previewArtifactsRouter);
