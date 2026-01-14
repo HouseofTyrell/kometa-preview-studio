@@ -6,6 +6,7 @@ import {
   VerticalAlign,
   createQueueConfig,
 } from '../../types/overlayConfig'
+import './QueueConfigPanel.css'
 
 interface QueueConfigPanelProps {
   queues: QueueConfig[]
@@ -103,9 +104,7 @@ function QueueConfigPanel({
   // Update queue property
   const handleQueueUpdate = useCallback(
     (queueId: string, updates: Partial<QueueConfig>) => {
-      const newQueues = queues.map((q) =>
-        q.id === queueId ? { ...q, ...updates } : q
-      )
+      const newQueues = queues.map((q) => (q.id === queueId ? { ...q, ...updates } : q))
       onQueuesChange(newQueues)
     },
     [queues, onQueuesChange]
@@ -170,9 +169,7 @@ function QueueConfigPanel({
         {queues.length === 0 ? (
           <div className="empty-state">
             <p>No queues configured.</p>
-            <p className="hint">
-              Queues let you arrange multiple overlays in a row or column.
-            </p>
+            <p className="hint">Queues let you arrange multiple overlays in a row or column.</p>
           </div>
         ) : (
           queues.map((queue) => (
@@ -215,9 +212,7 @@ function QueueConfigPanel({
                 <button
                   key={key}
                   type="button"
-                  className={`grid-cell ${
-                    getQueuePositionKey(selectedQueue) === key ? 'active' : ''
-                  }`}
+                  className={`grid-cell ${getQueuePositionKey(selectedQueue) === key ? 'active' : ''}`}
                   onClick={() => handlePositionChange(h, v)}
                   disabled={disabled}
                   title={key}
@@ -233,24 +228,16 @@ function QueueConfigPanel({
             <div className="direction-toggle">
               <button
                 type="button"
-                className={`direction-btn ${
-                  selectedQueue.direction === 'horizontal' ? 'active' : ''
-                }`}
-                onClick={() =>
-                  handleQueueUpdate(selectedQueue.id, { direction: 'horizontal' })
-                }
+                className={`direction-btn ${selectedQueue.direction === 'horizontal' ? 'active' : ''}`}
+                onClick={() => handleQueueUpdate(selectedQueue.id, { direction: 'horizontal' })}
                 disabled={disabled}
               >
                 → Horizontal
               </button>
               <button
                 type="button"
-                className={`direction-btn ${
-                  selectedQueue.direction === 'vertical' ? 'active' : ''
-                }`}
-                onClick={() =>
-                  handleQueueUpdate(selectedQueue.id, { direction: 'vertical' })
-                }
+                className={`direction-btn ${selectedQueue.direction === 'vertical' ? 'active' : ''}`}
+                onClick={() => handleQueueUpdate(selectedQueue.id, { direction: 'vertical' })}
                 disabled={disabled}
               >
                 ↓ Vertical
@@ -318,360 +305,6 @@ function QueueConfigPanel({
           </div>
         </div>
       )}
-
-      <style>{`
-        .queue-config-panel {
-          display: flex;
-          flex-direction: column;
-          height: 100%;
-          background-color: var(--bg-secondary);
-          border-radius: var(--radius-md);
-          border: 1px solid var(--border-color);
-          overflow: hidden;
-        }
-
-        .panel-header {
-          display: flex;
-          justify-content: space-between;
-          align-items: center;
-          padding: 0.75rem 1rem;
-          border-bottom: 1px solid var(--border-color);
-        }
-
-        .panel-title {
-          margin: 0;
-          font-size: 0.875rem;
-          font-weight: 600;
-        }
-
-        .add-queue-btn {
-          padding: 0.375rem 0.75rem;
-          background-color: var(--primary);
-          color: white;
-          border: none;
-          border-radius: var(--radius-sm);
-          font-size: 0.75rem;
-          font-weight: 500;
-          cursor: pointer;
-        }
-
-        .add-queue-btn:hover:not(:disabled) {
-          opacity: 0.9;
-        }
-
-        .add-queue-btn:disabled {
-          opacity: 0.5;
-          cursor: not-allowed;
-        }
-
-        .create-form {
-          display: flex;
-          gap: 0.5rem;
-          padding: 0.75rem 1rem;
-          border-bottom: 1px solid var(--border-color);
-          background-color: var(--bg-tertiary);
-        }
-
-        .queue-name-input {
-          flex: 1;
-          padding: 0.5rem 0.75rem;
-          border: 1px solid var(--border-color);
-          border-radius: var(--radius-sm);
-          background-color: var(--bg-primary);
-          color: var(--text-primary);
-          font-size: 0.875rem;
-        }
-
-        .queue-name-input:focus {
-          outline: none;
-          border-color: var(--primary);
-        }
-
-        .create-btn {
-          padding: 0.5rem 1rem;
-          background-color: var(--success);
-          color: white;
-          border: none;
-          border-radius: var(--radius-sm);
-          font-size: 0.875rem;
-          cursor: pointer;
-        }
-
-        .create-btn:disabled {
-          opacity: 0.5;
-          cursor: not-allowed;
-        }
-
-        .queue-list {
-          padding: 0.5rem;
-          max-height: 150px;
-          overflow-y: auto;
-          border-bottom: 1px solid var(--border-color);
-        }
-
-        .empty-state {
-          text-align: center;
-          padding: 1rem;
-          color: var(--text-muted);
-          font-size: 0.875rem;
-        }
-
-        .empty-state .hint {
-          font-size: 0.75rem;
-          margin-top: 0.25rem;
-        }
-
-        .queue-item {
-          display: flex;
-          align-items: center;
-          justify-content: space-between;
-          padding: 0.5rem 0.75rem;
-          border-radius: var(--radius-sm);
-          cursor: pointer;
-          transition: all 0.15s;
-        }
-
-        .queue-item:hover {
-          background-color: var(--bg-tertiary);
-        }
-
-        .queue-item.selected {
-          background-color: var(--primary-light, rgba(99, 102, 241, 0.1));
-          border-left: 2px solid var(--primary);
-        }
-
-        .queue-info {
-          display: flex;
-          flex-direction: column;
-          gap: 0.125rem;
-        }
-
-        .queue-name {
-          font-size: 0.875rem;
-          font-weight: 500;
-        }
-
-        .queue-meta {
-          font-size: 0.75rem;
-          color: var(--text-muted);
-        }
-
-        .delete-queue-btn {
-          padding: 0.25rem 0.5rem;
-          background: none;
-          border: none;
-          font-size: 1rem;
-          color: var(--text-muted);
-          cursor: pointer;
-          opacity: 0;
-          transition: opacity 0.15s;
-        }
-
-        .queue-item:hover .delete-queue-btn {
-          opacity: 1;
-        }
-
-        .delete-queue-btn:hover {
-          color: var(--danger);
-        }
-
-        .queue-editor {
-          flex: 1;
-          padding: 1rem;
-          overflow-y: auto;
-          display: flex;
-          flex-direction: column;
-          gap: 1rem;
-        }
-
-        .editor-section {
-          display: flex;
-          flex-direction: column;
-          gap: 0.5rem;
-        }
-
-        .section-label {
-          font-size: 0.75rem;
-          font-weight: 600;
-          color: var(--text-secondary);
-          text-transform: uppercase;
-          letter-spacing: 0.05em;
-        }
-
-        .position-grid {
-          display: grid;
-          grid-template-columns: repeat(3, 1fr);
-          gap: 4px;
-          width: 100px;
-        }
-
-        .grid-cell {
-          aspect-ratio: 1;
-          display: flex;
-          align-items: center;
-          justify-content: center;
-          background-color: var(--bg-tertiary);
-          border: 1px solid var(--border-color);
-          border-radius: var(--radius-sm);
-          cursor: pointer;
-          transition: all 0.15s;
-        }
-
-        .grid-cell:hover:not(:disabled) {
-          background-color: var(--bg-primary);
-          border-color: var(--primary);
-        }
-
-        .grid-cell.active {
-          background-color: var(--primary);
-          border-color: var(--primary);
-        }
-
-        .grid-cell.active .cell-dot {
-          background-color: white;
-        }
-
-        .cell-dot {
-          width: 6px;
-          height: 6px;
-          border-radius: 50%;
-          background-color: var(--text-muted);
-        }
-
-        .direction-toggle {
-          display: flex;
-          gap: 0.25rem;
-          padding: 0.25rem;
-          background-color: var(--bg-tertiary);
-          border-radius: var(--radius-sm);
-        }
-
-        .direction-btn {
-          flex: 1;
-          padding: 0.5rem;
-          border: none;
-          background: transparent;
-          font-size: 0.75rem;
-          color: var(--text-secondary);
-          cursor: pointer;
-          border-radius: var(--radius-sm);
-          transition: all 0.15s;
-        }
-
-        .direction-btn:hover:not(:disabled) {
-          color: var(--text-primary);
-        }
-
-        .direction-btn.active {
-          background-color: var(--bg-primary);
-          color: var(--primary);
-          box-shadow: 0 1px 2px rgba(0, 0, 0, 0.1);
-        }
-
-        .control-row {
-          display: flex;
-          align-items: center;
-          gap: 0.75rem;
-        }
-
-        .control-label {
-          font-size: 0.75rem;
-          color: var(--text-secondary);
-          min-width: 60px;
-        }
-
-        .number-input-group {
-          display: flex;
-          align-items: center;
-          gap: 0.25rem;
-        }
-
-        .number-input {
-          width: 60px;
-          padding: 0.375rem 0.5rem;
-          border: 1px solid var(--border-color);
-          border-radius: var(--radius-sm);
-          background-color: var(--bg-primary);
-          color: var(--text-primary);
-          font-size: 0.875rem;
-          text-align: center;
-        }
-
-        .number-input:focus {
-          outline: none;
-          border-color: var(--primary);
-        }
-
-        .unit {
-          font-size: 0.75rem;
-          color: var(--text-muted);
-        }
-
-        .queue-items {
-          display: flex;
-          flex-direction: column;
-          gap: 0.25rem;
-          max-height: 150px;
-          overflow-y: auto;
-        }
-
-        .queue-overlay-item {
-          display: flex;
-          align-items: center;
-          gap: 0.5rem;
-          padding: 0.5rem 0.75rem;
-          background-color: var(--bg-tertiary);
-          border-radius: var(--radius-sm);
-        }
-
-        .item-index {
-          width: 20px;
-          height: 20px;
-          display: flex;
-          align-items: center;
-          justify-content: center;
-          background-color: var(--primary);
-          color: white;
-          font-size: 0.75rem;
-          font-weight: bold;
-          border-radius: 50%;
-        }
-
-        .item-name {
-          flex: 1;
-          font-size: 0.875rem;
-        }
-
-        .item-weight {
-          font-size: 0.75rem;
-          color: var(--text-muted);
-        }
-
-        .remove-from-queue-btn {
-          padding: 0.125rem 0.375rem;
-          background: none;
-          border: none;
-          font-size: 0.875rem;
-          color: var(--text-muted);
-          cursor: pointer;
-        }
-
-        .remove-from-queue-btn:hover {
-          color: var(--danger);
-        }
-
-        .no-items {
-          text-align: center;
-          padding: 1rem;
-          color: var(--text-muted);
-          font-size: 0.75rem;
-        }
-
-        .no-items .hint {
-          font-size: 0.625rem;
-          margin-top: 0.25rem;
-        }
-      `}</style>
     </div>
   )
 }
