@@ -4,6 +4,7 @@ import ComparisonView from './ComparisonView'
 import ZoomableImage from './ZoomableImage'
 import ZoomControls from './ZoomControls'
 import PosterSizeSelector, { POSTER_SIZES, EPISODE_SIZES } from './PosterSizeSelector'
+import FullscreenPreview from './FullscreenPreview'
 
 type ViewMode = 'before' | 'after' | 'compare'
 
@@ -45,6 +46,7 @@ function PreviewTile({
   const [viewMode, setViewMode] = useState<ViewMode>(afterUrl ? 'after' : 'before')
   const [zoom, setZoom] = useState(1)
   const [posterSize, setPosterSize] = useState('auto')
+  const [isFullscreen, setIsFullscreen] = useState(false)
 
   // Get the current poster size dimensions
   const sizes = mediaType === 'episode' ? EPISODE_SIZES : POSTER_SIZES
@@ -197,13 +199,33 @@ function PreviewTile({
             />
           </div>
 
-          {afterUrl && (
-            <button className="btn btn-sm btn-secondary" onClick={handleDownload}>
-              Download
+          <div className="controls-right">
+            <button
+              className="btn-icon-sm"
+              onClick={() => setIsFullscreen(true)}
+              title="Fullscreen preview"
+              aria-label="Open fullscreen preview"
+            >
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                <path d="M8 3H5a2 2 0 00-2 2v3m18 0V5a2 2 0 00-2-2h-3m0 18h3a2 2 0 002-2v-3M3 16v3a2 2 0 002 2h3" />
+              </svg>
             </button>
-          )}
+            {afterUrl && (
+              <button className="btn btn-sm btn-secondary" onClick={handleDownload}>
+                Download
+              </button>
+            )}
+          </div>
         </div>
       )}
+
+      <FullscreenPreview
+        isOpen={isFullscreen}
+        onClose={() => setIsFullscreen(false)}
+        beforeUrl={beforeUrl}
+        afterUrl={afterUrl}
+        label={label}
+      />
 
       <style>{`
         .preview-tile {
@@ -295,6 +317,32 @@ function PreviewTile({
           align-items: center;
           gap: 0.5rem;
           flex-wrap: wrap;
+        }
+
+        .controls-right {
+          display: flex;
+          align-items: center;
+          gap: 0.5rem;
+        }
+
+        .btn-icon-sm {
+          display: flex;
+          align-items: center;
+          justify-content: center;
+          width: 28px;
+          height: 28px;
+          padding: 0;
+          background-color: var(--bg-primary);
+          border: none;
+          border-radius: var(--radius-sm);
+          color: var(--text-secondary);
+          cursor: pointer;
+          transition: all 0.2s;
+        }
+
+        .btn-icon-sm:hover {
+          background-color: var(--bg-tertiary);
+          color: var(--text-primary);
         }
 
         .toggle-group {
