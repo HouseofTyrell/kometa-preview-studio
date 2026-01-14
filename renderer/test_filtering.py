@@ -23,14 +23,19 @@ from preview_entrypoint import (
     is_metadata_endpoint,
     extract_allowed_rating_keys,
     extract_preview_targets,
+    safe_preview_targets,
     # Mock library mode functions
     build_synthetic_library_sections_xml,
+    build_synthetic_section_detail_xml,
     build_synthetic_listing_xml,
     build_synthetic_children_xml,
     is_library_sections_endpoint,
     is_children_endpoint,
     extract_section_id,
     extract_search_query,
+    extract_image_from_body,
+    sanitize_overlay_data_for_fast_mode,
+    TMDbProxyHandler,
 )
 
 
@@ -1417,6 +1422,116 @@ class TestDiagnosticTracking(unittest.TestCase):
 
         # No warning for 0
         self.assertFalse(0 > 0)
+
+
+class TestLibrarySectionType(unittest.TestCase):
+    """Tests for synthetic section detail type correctness"""
+
+    def test_section_detail_movie_type(self):
+        """Movies section should report type=movie"""
+        xml_bytes = build_synthetic_section_detail_xml('1', [{'type': 'movie'}])
+        root = ET.fromstring(xml_bytes)
+        directory = root.find('Directory')
+        self.assertIsNotNone(directory)
+        self.assertEqual(directory.get('type'), 'movie')
+
+
+class TestUploadCaptureParsing(unittest.TestCase):
+    """Tests for upload image extraction logic"""
+
+    def test_extract_raw_jpeg(self):
+        """Raw JPEG body should be detected"""
+        jpeg_bytes = b'\xff\xd8\xff\xe0' + b'\x00' * 20
+        image_bytes, ext = extract_image_from_body(jpeg_bytes, 'image/jpeg')
+        self.assertEqual(image_bytes, jpeg_bytes)
+        self.assertEqual(ext, 'jpg')
+
+    def test_extract_multipart_jpeg(self):
+        """Multipart JPEG should be extracted"""
+        jpeg_bytes = b'\xff\xd8\xff\xe0' + b'\x00' * 20
+        boundary = '----WebKitFormBoundary7MA4YWxkTrZu0gW'
+        body = (
+            f'--{boundary}\r\n'
+            'Content-Disposition: form-data; name="file"; filename="poster.jpg"\r\n'
+            'Content-Type: image/jpeg\r\n\r\n'
+        ).encode() + jpeg_bytes + f'\r\n--{boundary}--\r\n'.encode()
+        content_type = f'multipart/form-data; boundary={boundary}'
+
+        image_bytes, ext = extract_image_from_body(body, content_type)
+        self.assertEqual(image_bytes, jpeg_bytes)
+        self.assertEqual(ext, 'jpg')
+
+
+class TestFastModeSanitization(unittest.TestCase):
+    """Tests for FAST mode sanitization"""
+
+    def test_letterboxd_removed_and_imdb_filter_stripped(self):
+        """Letterboxd entries removed, IMDb category_filter stripped"""
+        data = {
+            'overlays': {
+                'LetterboxdOverlay': {
+                    'letterboxd_list': 'https://letterboxd.com/user/list'
+                },
+                'ImdbAwardsOverlay': {
+                    'imdb_awards': {
+                        'category_filter': 'best motion picture, animated'
+                    }
+                },
+            }
+        }
+        sanitized, stats = sanitize_overlay_data_for_fast_mode(data)
+        self.assertNotIn('LetterboxdOverlay', sanitized['overlays'])
+        self.assertEqual(stats['letterboxd_removed'], 1)
+        imdb_awards = sanitized['overlays']['ImdbAwardsOverlay']['imdb_awards']
+        self.assertNotIn('category_filter', imdb_awards)
+        self.assertEqual(stats['imdb_category_filters_stripped'], 1)
+
+
+class TestFastModeTmdbCapping(unittest.TestCase):
+    """Tests for FAST mode TMDb discover capping"""
+
+    def test_discover_capped(self):
+        """Discover responses should be capped to id_limit"""
+        import json
+
+        handler = TMDbProxyHandler.__new__(TMDbProxyHandler)
+        handler.id_limit = 2
+        handler.pages_limit = 1
+
+        response = {
+            'page': 1,
+            'total_pages': 3,
+            'total_results': 5,
+            'results': [
+                {'id': 1},
+                {'id': 2},
+                {'id': 3},
+                {'id': 4},
+                {'id': 5},
+            ],
+        }
+        body = json.dumps(response).encode('utf-8')
+
+        capped_body, was_capped = TMDbProxyHandler._cap_tmdb_response(
+            handler, body, '/3/discover/movie'
+        )
+        self.assertTrue(was_capped)
+        capped = json.loads(capped_body)
+        self.assertEqual(len(capped['results']), 2)
+        self.assertEqual(capped['total_pages'], 1)
+
+
+class TestSafePreviewTargets(unittest.TestCase):
+    """Tests for safe preview target extraction"""
+
+    def test_safe_preview_targets_missing(self):
+        """Missing preview section should return empty list"""
+        self.assertEqual(safe_preview_targets({}), [])
+
+    def test_safe_preview_targets_invalid_type(self):
+        """Invalid preview targets should return empty list"""
+        config = {'preview': {'targets': {}}}
+        self.assertEqual(safe_preview_targets(config), [])
 
 
 if __name__ == '__main__':
