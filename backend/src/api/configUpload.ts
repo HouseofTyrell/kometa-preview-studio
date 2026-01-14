@@ -27,6 +27,11 @@ router.post('/', async (req: Request, res: Response) => {
     if (req.file) {
       configYaml = req.file.buffer.toString('utf-8');
     } else if (req.body?.configYaml) {
+      // Validate configYaml is a string
+      if (typeof req.body.configYaml !== 'string') {
+        res.status(400).json({ error: 'configYaml must be a string' });
+        return;
+      }
       configYaml = req.body.configYaml;
     } else {
       res.status(400).json({
@@ -135,6 +140,11 @@ router.put('/:profileId', (req: Request, res: Response) => {
 
   if (!configYaml) {
     res.status(400).json({ error: 'configYaml is required' });
+    return;
+  }
+
+  if (typeof configYaml !== 'string') {
+    res.status(400).json({ error: 'configYaml must be a string' });
     return;
   }
 

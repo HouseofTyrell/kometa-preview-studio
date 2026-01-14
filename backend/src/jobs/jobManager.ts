@@ -136,7 +136,9 @@ class JobManager extends EventEmitter {
     // Start job processing in background
     this.processJob(jobId, config, analysis, options).catch((err) => {
       console.error(`Job ${jobId} failed:`, err);
-      this.updateJobStatus(jobId, 'failed', 0, err.message);
+      this.updateJobStatus(jobId, 'failed', 0, err.message).catch((updateErr) => {
+        console.error(`Failed to update job ${jobId} status:`, updateErr);
+      });
     });
 
     return jobId;

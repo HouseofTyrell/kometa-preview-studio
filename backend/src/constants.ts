@@ -16,6 +16,7 @@ export const MAX_JSON_SIZE = '10mb';
 export const PLEX_DEFAULT_TIMEOUT_MS = 30000; // 30 seconds
 export const DOCKER_PULL_TIMEOUT_MS = 300000; // 5 minutes
 export const SSE_HEARTBEAT_INTERVAL_MS = 30000; // 30 seconds
+export const SSE_CLOSE_DELAY_MS = 100; // Delay before closing SSE connection
 export const JOB_POLL_INTERVAL_MS = 2000; // 2 seconds
 
 // Job status values - single source of truth

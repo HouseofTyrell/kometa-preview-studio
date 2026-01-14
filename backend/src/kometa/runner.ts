@@ -169,6 +169,16 @@ export class KometaRunner extends EventEmitter {
         }
       });
 
+      // Handle stream errors
+      stream.on('error', (err) => {
+        console.error(`Stream error for job ${jobId}:`, err);
+        this.emitEvent(jobId, {
+          type: 'log',
+          timestamp: new Date(),
+          message: `Stream error: ${err.message}`,
+        });
+      });
+
       // Start container
       await container.start();
 

@@ -14,6 +14,20 @@ router.post('/start', async (req: Request, res: Response) => {
   try {
     const { profileId, configYaml: directConfigYaml, testOptions } = req.body;
 
+    // Validate input types
+    if (profileId !== undefined && typeof profileId !== 'string') {
+      res.status(400).json({ error: 'profileId must be a string' });
+      return;
+    }
+    if (directConfigYaml !== undefined && typeof directConfigYaml !== 'string') {
+      res.status(400).json({ error: 'configYaml must be a string' });
+      return;
+    }
+    if (testOptions !== undefined && typeof testOptions !== 'object') {
+      res.status(400).json({ error: 'testOptions must be an object' });
+      return;
+    }
+
     let configYaml: string;
 
     // Get config from profile or direct submission

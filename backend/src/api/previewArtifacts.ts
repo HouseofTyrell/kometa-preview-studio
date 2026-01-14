@@ -76,8 +76,14 @@ router.get('/image/:jobId/:folder/:filename', async (req: Request, res: Response
     res.setHeader('Content-Type', contentType);
     res.setHeader('Cache-Control', 'public, max-age=3600');
 
-    // Stream the file
+    // Stream the file with error handling
     const stream = fs.createReadStream(imagePath);
+    stream.on('error', (err) => {
+      console.error('Stream error serving image:', err);
+      if (!res.headersSent) {
+        res.status(500).json({ error: 'Failed to read image file' });
+      }
+    });
     stream.pipe(res);
 
   } catch (err) {
@@ -149,7 +155,14 @@ router.get('/download/:jobId/:folder/:filename', async (req: Request, res: Respo
     // Set download headers
     res.setHeader('Content-Disposition', `attachment; filename="${filename}"`);
 
+    // Stream the file with error handling
     const stream = fs.createReadStream(imagePath);
+    stream.on('error', (err) => {
+      console.error('Stream error during download:', err);
+      if (!res.headersSent) {
+        res.status(500).json({ error: 'Failed to read file' });
+      }
+    });
     stream.pipe(res);
 
   } catch (err) {
