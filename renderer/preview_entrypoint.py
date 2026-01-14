@@ -206,6 +206,26 @@ PLEX_UPLOAD_PATTERN = re.compile(
     r'^/library/metadata/(\d+)/(posters?|arts?|thumbs?)(?:\?.*)?$'
 )
 
+# Additional upload patterns to capture more aggressively
+# Kometa may use various upload mechanisms
+PLEX_UPLOAD_PATTERNS_EXTENDED = [
+    # Standard metadata upload paths
+    re.compile(r'^/library/metadata/(\d+)/(posters?|arts?|thumbs?)(?:\?.*)?$'),
+    # Photo transcode (used for image uploads/processing)
+    re.compile(r'^/photo/:/transcode'),
+    # Library metadata upload (alternative path)
+    re.compile(r'^/library/metadata/(\d+)/uploads?(?:\?.*)?$'),
+    # Direct upload paths
+    re.compile(r'^/:/upload'),
+]
+
+# Pattern to extract ratingKey from various upload paths
+RATING_KEY_EXTRACT_PATTERNS = [
+    re.compile(r'/library/metadata/(\d+)/'),
+    re.compile(r'[?&]ratingKey=(\d+)'),
+    re.compile(r'[?&]key=/library/metadata/(\d+)'),
+]
+
 # Library listing endpoint patterns (endpoints that return lists of items)
 # These are filtered to only include allowed ratingKeys
 # Note: Using simpler patterns that match the path prefix, query string handled separately
@@ -244,6 +264,9 @@ ARTWORK_PATTERNS = [
 
 # Library sections endpoint - used to get list of library sections
 LIBRARY_SECTIONS_PATTERN = re.compile(r'^/library/sections(?:\?.*)?$')
+# Pattern to match specific section requests: /library/sections/{id}
+# This is used when Kometa queries section details
+LIBRARY_SECTION_DETAIL_PATTERN = re.compile(r'^/library/sections/(\d+)(?:\?.*)?$')
 
 # Section ID extraction pattern
 SECTION_ID_PATTERN = re.compile(r'^/library/sections/(\d+)/')
@@ -437,6 +460,82 @@ def extract_preview_targets(preview_config: Dict[str, Any]) -> List[Dict[str, An
 # ============================================================================
 # Mock Library Mode - Synthetic XML Generation
 # ============================================================================
+
+def build_synthetic_section_detail_xml(section_id: str, targets: List[Dict[str, Any]]) -> bytes:
+    """
+    Build synthetic /library/sections/{id} XML response for a specific section.
+
+    This fixes P0 libtype mismatch by ensuring the section returns the correct type
+    (movie/show) instead of forwarding to real Plex which might return a different library.
+
+    Args:
+        section_id: The requested section ID
+        targets: List of preview targets to determine the library type
+
+    Returns:
+        XML bytes for MediaContainer with the section's Directory element
+    """
+    # Determine section type based on targets
+    has_movies = any(t.get('type') in ('movie', 'movies') for t in targets)
+    has_shows = any(t.get('type') in ('show', 'shows', 'series', 'season', 'episode') for t in targets)
+
+    # Section 1 is Movies, Section 2 is TV Shows (our convention)
+    if section_id == '1' or (has_movies and not has_shows):
+        section_type = 'movie'
+        section_title = 'Movies'
+        agent = 'tv.plex.agents.movie'
+        scanner = 'Plex Movie'
+    elif section_id == '2' or (has_shows and not has_movies):
+        section_type = 'show'
+        section_title = 'TV Shows'
+        agent = 'tv.plex.agents.series'
+        scanner = 'Plex TV Series'
+    else:
+        # Default to movie for section 1, show for other sections
+        if section_id == '1':
+            section_type = 'movie'
+            section_title = 'Movies'
+            agent = 'tv.plex.agents.movie'
+            scanner = 'Plex Movie'
+        else:
+            section_type = 'show'
+            section_title = 'TV Shows'
+            agent = 'tv.plex.agents.series'
+            scanner = 'Plex TV Series'
+
+    root = ET.Element('MediaContainer', {
+        'size': '1',
+        'allowSync': '0',
+        'identifier': 'com.plexapp.plugins.library',
+        'mediaTagPrefix': '/system/bundle/media/flags/',
+        'mediaTagVersion': '1',
+    })
+
+    ET.SubElement(root, 'Directory', {
+        'allowSync': '1',
+        'art': f'/:/resources/{section_type}-fanart.jpg',
+        'composite': f'/library/sections/{section_id}/composite/1234',
+        'filters': '1',
+        'refreshing': '0',
+        'thumb': f'/:/resources/{section_type}.png',
+        'key': section_id,
+        'type': section_type,
+        'title': section_title,
+        'agent': agent,
+        'scanner': scanner,
+        'language': 'en-US',
+        'uuid': f'mock-uuid-{section_id}',
+        # Additional attributes Kometa may check
+        'scannedAt': '1700000000',
+        'createdAt': '1600000000',
+        'content': '1',
+        'directory': '1',
+        'hidden': '0',
+        'location': f'id={section_id}',
+    })
+
+    return ET.tostring(root, encoding='unicode').encode('utf-8')
+
 
 def build_synthetic_library_sections_xml(targets: List[Dict[str, Any]]) -> bytes:
     """
@@ -857,6 +956,17 @@ def is_library_sections_endpoint(path: str) -> bool:
     return LIBRARY_SECTIONS_PATTERN.match(path_base) is not None
 
 
+def is_library_section_detail_endpoint(path: str) -> Optional[str]:
+    """
+    Check if path is /library/sections/{id} (section detail, not /all or other).
+
+    Returns the section ID if matched, None otherwise.
+    """
+    path_base = path.split('?')[0]
+    match = LIBRARY_SECTION_DETAIL_PATTERN.match(path_base)
+    return match.group(1) if match else None
+
+
 def is_children_endpoint(path: str) -> Optional[str]:
     """
     Check if path is /library/metadata/{id}/children.
@@ -947,11 +1057,13 @@ class PlexProxyHandler(BaseHTTPRequestHandler):
         is_listing = is_listing_endpoint(path)
         is_meta = is_metadata_endpoint(path)
         is_sections = is_library_sections_endpoint(path)
+        section_detail_id = is_library_section_detail_endpoint(path)
         children_parent = is_children_endpoint(path)
 
         logger.info(
             f"PROXY_GET path={path_base} is_listing={is_listing} "
-            f"is_metadata={is_meta} is_sections={is_sections}"
+            f"is_metadata={is_meta} is_sections={is_sections} "
+            f"section_detail={section_detail_id is not None}"
         )
 
         # Mock library mode: return synthetic XML for listing endpoints
@@ -959,6 +1071,13 @@ class PlexProxyHandler(BaseHTTPRequestHandler):
             # Handle /library/sections endpoint
             if is_sections:
                 self._handle_mock_sections()
+                return
+
+            # Handle /library/sections/{id} (specific section detail) - P0 libtype fix
+            # This ensures Kometa sees the correct type (movie/show) instead of
+            # whatever library happens to be at that ID on the real Plex server
+            if section_detail_id:
+                self._handle_mock_section_detail(section_detail_id)
                 return
 
             # Handle listing endpoints (all, search, browse)
@@ -1245,6 +1364,43 @@ class PlexProxyHandler(BaseHTTPRequestHandler):
 
         self._send_xml_response(xml_bytes)
 
+    def _handle_mock_section_detail(self, section_id: str):
+        """
+        Handle /library/sections/{id} in mock mode - return synthetic section detail.
+
+        P0 Fix: This ensures Kometa sees the correct library type (movie/show)
+        instead of whatever library is at that ID on the real Plex server.
+        Fixes "Unknown libtype 'movie' ... Available libtypes: ['collection']" error.
+        """
+        xml_bytes = build_synthetic_section_detail_xml(section_id, self.preview_targets)
+
+        # Debug logging
+        if DEBUG_MOCK_XML:
+            logger.debug(f"MOCK_SECTION_DETAIL_XML: {xml_bytes[:500].decode('utf-8', errors='replace')}")
+
+        # Parse to get section type
+        section_type = 'unknown'
+        try:
+            root = ET.fromstring(xml_bytes)
+            directory = root.find('Directory')
+            if directory is not None:
+                section_type = directory.get('type', 'unknown')
+        except Exception:
+            pass
+
+        logger.info(f"MOCK_SECTION_DETAIL section_id={section_id} type={section_type}")
+
+        with self.data_lock:
+            self.mock_list_requests.append({
+                'path': f'/library/sections/{section_id}',
+                'type': 'section_detail',
+                'section_id': section_id,
+                'section_type': section_type,
+                'timestamp': datetime.now().isoformat()
+            })
+
+        self._send_xml_response(xml_bytes)
+
     def _handle_mock_listing(self, path: str):
         """Handle listing endpoints in mock mode - return synthetic item list."""
         section_id = extract_section_id(path)
@@ -1428,16 +1584,32 @@ class PlexProxyHandler(BaseHTTPRequestHandler):
         self.wfile.write(b'{}')
 
     def _block_and_capture(self, method: str):
-        """Block a write request and capture any uploaded image data"""
+        """
+        Block a write request and capture any uploaded image data.
+
+        Enhanced capture logic (P0 fix):
+        - Captures any PUT/POST with image content
+        - Handles various upload paths including /photo/:/transcode
+        - Logs all write requests for debugging
+        - Saves image payloads with deterministic filenames
+        """
         timestamp = datetime.now().isoformat()
         timestamp_safe = datetime.now().strftime('%Y%m%d_%H%M%S_%f')
 
         # Read request body
         content_length = int(self.headers.get('Content-Length', '0'))
+        content_type = self.headers.get('Content-Type', '')
         body = self.rfile.read(content_length) if content_length > 0 else b''
 
         # Parse ratingKey and kind from path
         rating_key, kind = self._parse_upload_path(self.path)
+
+        # Log detailed request info for debugging
+        logger.debug(
+            f"WRITE_REQUEST: {method} {self.path} "
+            f"content_length={content_length} content_type={content_type} "
+            f"parsed_ratingKey={rating_key} parsed_kind={kind}"
+        )
 
         # Log the blocked request
         blocked_entry = {
@@ -1446,7 +1618,8 @@ class PlexProxyHandler(BaseHTTPRequestHandler):
             'timestamp': timestamp,
             'rating_key': rating_key,
             'kind': kind,
-            'content_length': content_length
+            'content_length': content_length,
+            'content_type': content_type,
         }
 
         capture_record: Dict[str, Any] = {
@@ -1456,47 +1629,52 @@ class PlexProxyHandler(BaseHTTPRequestHandler):
             'kind': kind,
             'timestamp': timestamp,
             'size_bytes': content_length,
+            'content_type': content_type,
             'saved_path': None,
             'parse_error': None
         }
 
         # Try to extract and save the image
-        if content_length > 0 and rating_key:
+        # Be aggressive: try to capture any body with image content
+        if content_length > 0:
             try:
                 image_bytes, ext = self._extract_image_from_body(body)
                 if image_bytes:
+                    # Use rating_key if found, otherwise save with 'unknown' prefix
+                    save_key = rating_key or 'unknown'
                     saved_path = self._save_captured_image(
-                        rating_key, kind, image_bytes, ext, timestamp_safe
+                        save_key, kind, image_bytes, ext, timestamp_safe
                     )
                     capture_record['saved_path'] = saved_path
                     capture_record['size_bytes'] = len(image_bytes)
                     logger.info(
-                        f"CAPTURED_UPLOAD ratingKey={rating_key} kind={kind} "
-                        f"bytes={len(image_bytes)} saved={saved_path}"
+                        f"CAPTURED_UPLOAD ratingKey={save_key} kind={kind} "
+                        f"bytes={len(image_bytes)} content_type={content_type} "
+                        f"path={self.path.split('?')[0]} saved={saved_path}"
                     )
                 else:
                     capture_record['parse_error'] = 'No image data found in body'
                     logger.warning(
-                        f"BLOCKED_WRITE (no image): {method} {self.path} "
-                        f"ratingKey={rating_key}"
+                        f"UPLOAD_IGNORED: {method} {self.path.split('?')[0]} "
+                        f"reason=no_image_data content_type={content_type} "
+                        f"content_length={content_length}"
                     )
                     # Save raw body for debugging
-                    self._save_debug_body(rating_key, kind, body, timestamp_safe)
+                    self._save_debug_body(rating_key or 'unknown', kind, body, timestamp_safe)
             except Exception as e:
                 capture_record['parse_error'] = str(e)
                 logger.error(
-                    f"BLOCKED_WRITE (parse error): {method} {self.path} "
+                    f"UPLOAD_CAPTURE_ERROR: {method} {self.path.split('?')[0]} "
                     f"ratingKey={rating_key} error={e}"
                 )
                 # Save raw body for debugging
-                self._save_debug_body(rating_key, kind, body, timestamp_safe)
-        elif content_length > 0:
-            # Has body but no ratingKey - save for debugging
-            logger.warning(f"BLOCKED_WRITE (unknown path): {method} {self.path}")
-            self._save_debug_body('unknown', 'unknown', body, timestamp_safe)
-            capture_record['parse_error'] = 'Could not parse ratingKey from path'
+                self._save_debug_body(rating_key or 'unknown', kind, body, timestamp_safe)
+        elif not rating_key:
+            # No body and no ratingKey
+            logger.debug(f"BLOCKED_WRITE (no body, unknown path): {method} {self.path}")
         else:
-            logger.warning(f"BLOCKED_WRITE (no body): {method} {self.path}")
+            # Has ratingKey but no body (could be a delete or metadata update)
+            logger.debug(f"BLOCKED_WRITE (no body): {method} {self.path}")
 
         with self.data_lock:
             self.blocked_requests.append(blocked_entry)
@@ -1513,9 +1691,20 @@ class PlexProxyHandler(BaseHTTPRequestHandler):
         """
         Parse ratingKey and upload kind from Plex API path.
 
+        Enhanced to handle various upload paths Kometa may use:
+        - /library/metadata/<ratingKey>/posters
+        - /library/metadata/<ratingKey>/poster
+        - /library/metadata/<ratingKey>/arts
+        - /library/metadata/<ratingKey>/thumbs
+        - /photo/:/transcode with ratingKey in query
+        - /:/upload with key parameter
+
         Returns: (ratingKey or None, kind)
         """
-        match = PLEX_UPLOAD_PATTERN.match(path.split('?')[0])
+        path_base = path.split('?')[0]
+
+        # Try standard upload pattern first
+        match = PLEX_UPLOAD_PATTERN.match(path_base)
         if match:
             rating_key = match.group(1)
             kind_raw = match.group(2)
@@ -1523,11 +1712,26 @@ class PlexProxyHandler(BaseHTTPRequestHandler):
             kind = kind_raw.rstrip('s')
             return rating_key, kind
 
-        # Fallback: try to find any /library/metadata/<id>/ pattern
-        fallback_match = re.search(r'/library/metadata/(\d+)/', path)
-        if fallback_match:
-            return fallback_match.group(1), 'unknown'
+        # Extract kind from path if possible
+        kind = 'poster'  # Default
+        if '/art' in path_base:
+            kind = 'art'
+        elif '/thumb' in path_base:
+            kind = 'thumb'
 
+        # Try to extract ratingKey from various patterns
+        for pattern in RATING_KEY_EXTRACT_PATTERNS:
+            match = pattern.search(path)
+            if match:
+                return match.group(1), kind
+
+        # Fallback: try to find any numeric ID in path
+        fallback_match = re.search(r'/(\d+)/', path)
+        if fallback_match:
+            return fallback_match.group(1), kind
+
+        # Log that we couldn't parse the path
+        logger.debug(f"UPLOAD_PATH_PARSE_FAILED: {path}")
         return None, 'unknown'
 
     def _extract_image_from_body(self, body: bytes) -> Tuple[Optional[bytes], str]:
@@ -2929,6 +3133,41 @@ def main():
         if render_success and config_hash:
             save_cache_hash(job_path, config_hash)
 
+        # P0 Safety Check: If we have targets but no captured uploads, provide actionable error
+        targets_count = len(preview_targets) if preview_targets else 0
+        if targets_count > 0 and len(successful_captures) == 0:
+            logger.error("=" * 60)
+            logger.error("UPLOAD CAPTURE FAILURE - No images were captured!")
+            logger.error("=" * 60)
+            logger.error(f"Targets: {targets_count}")
+            logger.error(f"Total blocked requests: {len(blocked_requests)}")
+            logger.error(f"Total capture attempts: {len(captured_uploads)}")
+
+            # Show last 20 PUT/POST requests for debugging
+            write_requests = [r for r in blocked_requests if r.get('method') in ('PUT', 'POST')]
+            if write_requests:
+                logger.error(f"\nLast {min(20, len(write_requests))} PUT/POST requests:")
+                for req in write_requests[-20:]:
+                    logger.error(
+                        f"  {req.get('method')} {req.get('path', '').split('?')[0]} "
+                        f"content_type={req.get('content_type')} "
+                        f"content_length={req.get('content_length')} "
+                        f"ratingKey={req.get('rating_key')}"
+                    )
+            else:
+                logger.error("No PUT/POST requests were received by the proxy!")
+                logger.error("Check if Kometa is actually sending upload requests.")
+
+            # Show failed captures
+            if failed_captures:
+                logger.error("\nFailed capture attempts:")
+                for cap in failed_captures[:10]:
+                    logger.error(
+                        f"  path={cap.get('path')} error={cap.get('parse_error')}"
+                    )
+
+            logger.error("=" * 60)
+
         # Report results
         output_count = len(list(output_dir.glob('*_after.*')))
         if output_count > 0 and len(missing_targets) == 0:
@@ -2942,6 +3181,12 @@ def main():
             final_exit = 1
         else:
             logger.error("Preview rendering failed: no output images generated")
+            # Add extra diagnostic info for P0 failure
+            if targets_count > 0:
+                logger.error(f"  - {targets_count} targets were expected")
+                logger.error(f"  - {len(blocked_requests)} write requests were blocked")
+                logger.error(f"  - {len(successful_captures)} images were captured")
+                logger.error("  Check logs above for UPLOAD_CAPTURED or UPLOAD_IGNORED messages")
             final_exit = 1
 
     finally:
