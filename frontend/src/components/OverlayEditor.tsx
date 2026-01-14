@@ -1,6 +1,6 @@
 import { useState, useCallback } from 'react'
 import { VisualOverlayEditor } from './overlay-editor'
-import { OverlayConfig } from '../types/overlayConfig'
+import { OverlayConfig, QueueConfig } from '../types/overlayConfig'
 
 interface OverlayEditorProps {
   overlayYaml: string
@@ -29,7 +29,7 @@ function OverlayEditor({ overlayYaml, onEdit, fullConfig }: OverlayEditorProps) 
   }, [overlayYaml])
 
   const handleVisualChange = useCallback(
-    (overlays: OverlayConfig[], yaml: string) => {
+    (overlays: OverlayConfig[], _queues: QueueConfig[], yaml: string) => {
       setVisualOverlays(overlays)
       // In a future version, we'd merge this into the full config
       console.log('Visual editor produced YAML:', yaml)

@@ -1,7 +1,6 @@
 import { useState, useCallback, useMemo } from 'react'
 import {
   QueueConfig,
-  QueueDirection,
   OverlayConfig,
   HorizontalAlign,
   VerticalAlign,

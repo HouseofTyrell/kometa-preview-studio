@@ -324,7 +324,7 @@ function OverlayPropertiesPanel({
                 {availableQueues.length > 0 ? (
                   <select
                     value={overlay.grouping.queue || ''}
-                    onChange={(e) => handleGroupingChange('queue', e.target.value || undefined)}
+                    onChange={(e) => handleGroupingChange('queue', e.target.value)}
                     disabled={disabled}
                     className="queue-select"
                   >
