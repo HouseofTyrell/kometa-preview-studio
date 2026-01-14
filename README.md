@@ -224,7 +224,7 @@ The preview renderer is based on the official Kometa Docker image (`kometateam/k
 
 1. **Pixel-identical rendering**: By using Kometa's actual overlay code, the preview output matches exactly what Kometa would produce when running against your real library.
 
-2. **Deterministic results**: The Kometa image version is pinned (default: `v2.0.2`) to ensure consistent rendering across different environments and over time.
+2. **Deterministic results**: The Kometa image version is pinned (default: `v2.2.2`) to ensure consistent rendering across different environments and over time.
 
 3. **Same fonts and styling**: Kometa's bundled fonts and styling calculations are used, eliminating subtle differences that could occur with a reimplementation.
 
@@ -303,7 +303,7 @@ For more technical details, see [renderer/PREVIEW_MODE.md](renderer/PREVIEW_MODE
 | `CORS_ORIGIN` | `http://localhost:5173` | Allowed CORS origin |
 | `JOBS_PATH` | `./jobs` | Jobs directory |
 | `FONTS_PATH` | `./fonts` | Fonts directory |
-| `KOMETA_IMAGE_TAG` | `v2.0.2` | Pinned Kometa Docker image tag |
+| `KOMETA_IMAGE_TAG` | `v2.2.2` | Pinned Kometa Docker image tag |
 | `KOMETA_RENDERER_IMAGE` | `kometa-preview-renderer:latest` | Built renderer image name |
 | `USER_ASSETS_PATH` | - | User asset directory mount |
 | `USER_KOMETA_CONFIG_PATH` | - | User Kometa config mount |

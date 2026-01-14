@@ -64,7 +64,7 @@ export function getKometaRendererImage(): string {
  * Get the Kometa image tag
  */
 export function getKometaImageTag(): string {
-  return process.env.KOMETA_IMAGE_TAG || 'v2.0.2';
+  return process.env.KOMETA_IMAGE_TAG || 'v2.2.2';
 }
 
 /**

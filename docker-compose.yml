@@ -20,7 +20,7 @@ services:
       # Kometa-based renderer image (built from ./renderer)
       - KOMETA_RENDERER_IMAGE=kometa-preview-renderer:latest
       # Pinned Kometa version for deterministic rendering
-      - KOMETA_IMAGE_TAG=${KOMETA_IMAGE_TAG:-v2.0.2}
+      - KOMETA_IMAGE_TAG=${KOMETA_IMAGE_TAG:-v2.2.2}
       # Cache directory for TMDb/external API data (persists between preview runs)
       - CACHE_HOST_PATH=${PWD}/cache
       # Optional: Mount user assets
@@ -50,7 +50,7 @@ services:
       context: ./renderer
       dockerfile: Dockerfile
       args:
-        - KOMETA_IMAGE_TAG=${KOMETA_IMAGE_TAG:-v2.0.2}
+        - KOMETA_IMAGE_TAG=${KOMETA_IMAGE_TAG:-v2.2.2}
     image: kometa-preview-renderer:latest
     # This service only builds the image, then exits immediately
     command: ["echo", "Renderer image built successfully"]

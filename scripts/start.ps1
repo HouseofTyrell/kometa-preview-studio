@@ -127,7 +127,7 @@ JOBS_PATH=/app/jobs
 FONTS_PATH=/app/fonts
 
 # Kometa Docker image tag (pinned for deterministic rendering)
-KOMETA_IMAGE_TAG=v2.0.2
+KOMETA_IMAGE_TAG=v2.2.2
 
 # Renderer image name (built from ./renderer)
 KOMETA_RENDERER_IMAGE=kometa-preview-renderer:latest

@@ -1,6 +1,6 @@
 # Kometa Preview Renderer
 # Based on official Kometa image to use Kometa's overlay rendering pipeline
-ARG KOMETA_IMAGE_TAG=v2.0.2
+ARG KOMETA_IMAGE_TAG=v2.2.2
 
 FROM kometateam/kometa:${KOMETA_IMAGE_TAG}
 
