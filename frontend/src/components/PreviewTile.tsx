@@ -1,5 +1,8 @@
 import { useState, useEffect } from 'react'
 import BeforeAfter from './BeforeAfter'
+import ComparisonView from './ComparisonView'
+
+type ViewMode = 'before' | 'after' | 'compare'
 
 interface PreviewTileProps {
   targetId: string
@@ -32,14 +35,14 @@ function PreviewTile({
   jobId,
 }: PreviewTileProps) {
   // Default to "Before" if afterUrl is not available, otherwise show "After"
-  const [showAfter, setShowAfter] = useState(!!afterUrl)
+  const [viewMode, setViewMode] = useState<ViewMode>(afterUrl ? 'after' : 'before')
 
-  // Auto-switch to "After" when afterUrl becomes available
+  // Auto-switch to "After" when afterUrl becomes available (unless already comparing)
   useEffect(() => {
-    if (afterUrl) {
-      setShowAfter(true)
+    if (afterUrl && viewMode === 'before') {
+      setViewMode('after')
     }
-  }, [afterUrl])
+  }, [afterUrl, viewMode])
 
   const hasImages = beforeUrl || afterUrl
 
@@ -83,11 +86,18 @@ function PreviewTile({
           </div>
         )}
 
-        {hasImages && (
+        {hasImages && viewMode === 'compare' && (
+          <ComparisonView
+            beforeUrl={beforeUrl}
+            afterUrl={afterUrl}
+          />
+        )}
+
+        {hasImages && viewMode !== 'compare' && (
           <BeforeAfter
             beforeUrl={beforeUrl}
             afterUrl={afterUrl}
-            showAfter={showAfter}
+            showAfter={viewMode === 'after'}
           />
         )}
       </div>
@@ -96,16 +106,24 @@ function PreviewTile({
         <div className="tile-controls">
           <div className="toggle-group">
             <button
-              className={`toggle-btn ${!showAfter ? 'active' : ''}`}
-              onClick={() => setShowAfter(false)}
+              className={`toggle-btn ${viewMode === 'before' ? 'active' : ''}`}
+              onClick={() => setViewMode('before')}
             >
               Before
             </button>
             <button
-              className={`toggle-btn ${showAfter ? 'active' : ''}`}
-              onClick={() => setShowAfter(true)}
+              className={`toggle-btn ${viewMode === 'after' ? 'active' : ''}`}
+              onClick={() => setViewMode('after')}
             >
               After
+            </button>
+            <button
+              className={`toggle-btn ${viewMode === 'compare' ? 'active' : ''}`}
+              onClick={() => setViewMode('compare')}
+              disabled={!beforeUrl}
+              title={!beforeUrl ? 'Need before image to compare' : 'Side-by-side comparison'}
+            >
+              Compare
             </button>
           </div>
 
@@ -222,6 +240,15 @@ function PreviewTile({
         .toggle-btn.active {
           background-color: var(--accent-primary);
           color: #000;
+        }
+
+        .toggle-btn:disabled {
+          opacity: 0.4;
+          cursor: not-allowed;
+        }
+
+        .toggle-btn:disabled:hover {
+          color: var(--text-secondary);
         }
       `}</style>
     </div>
