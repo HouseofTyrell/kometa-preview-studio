@@ -9,6 +9,41 @@
   overflow: hidden;
 }
 
+/* Draft Recovery Banner */
+.draft-banner {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 0.75rem 1rem;
+  background-color: rgba(59, 130, 246, 0.1);
+  border-bottom: 1px solid rgba(59, 130, 246, 0.3);
+}
+
+.draft-banner-content {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+}
+
+.draft-icon {
+  font-size: 1rem;
+}
+
+.draft-message {
+  font-size: 0.875rem;
+  color: var(--text-primary);
+}
+
+.draft-actions {
+  display: flex;
+  gap: 0.5rem;
+}
+
+.draft-actions .btn-sm {
+  padding: 0.25rem 0.75rem;
+  font-size: 0.75rem;
+}
+
 .editor-header {
   display: flex;
   justify-content: space-between;

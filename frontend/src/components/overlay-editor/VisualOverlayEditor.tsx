@@ -1,4 +1,4 @@
-import { useState, useCallback, useMemo } from 'react'
+import { useState, useCallback, useMemo, useEffect } from 'react'
 import BuiltinOverlayLibrary from './BuiltinOverlayLibrary'
 import OverlayPropertiesPanel from './OverlayPropertiesPanel'
 import ActiveOverlaysList from './ActiveOverlaysList'
@@ -14,6 +14,7 @@ import {
   createTextOverlayConfig,
 } from '../../types/overlayConfig'
 import { generateOverlayYaml } from '../../utils/overlayYamlGenerator'
+import { useAutoSave, DraftData } from '../../hooks/useAutoSave'
 import './VisualOverlayEditor.css'
 
 interface VisualOverlayEditorProps {
@@ -29,11 +30,58 @@ function VisualOverlayEditor({
   onConfigChange,
   disabled = false,
 }: VisualOverlayEditorProps) {
+  const { saveDraft, loadDraft, clearDraft, getDraftAge } = useAutoSave()
+
+  // Draft recovery state
+  const [showDraftBanner, setShowDraftBanner] = useState(false)
+  const [draftAge, setDraftAge] = useState<string | null>(null)
+  const [savedDraft, setSavedDraft] = useState<DraftData | null>(null)
+
   const [overlays, setOverlays] = useState<OverlayConfig[]>(initialOverlays)
   const [queues, setQueues] = useState<QueueConfig[]>(initialQueues)
   const [selectedId, setSelectedId] = useState<string | null>(null)
   const [viewMode, setViewMode] = useState<'visual' | 'yaml'>('visual')
   const [showQueuesPanel, setShowQueuesPanel] = useState(false)
+
+  // Check for saved draft on mount (only if no initial data)
+  useEffect(() => {
+    if (initialOverlays.length === 0 && initialQueues.length === 0) {
+      const draft = loadDraft()
+      if (draft && draft.overlays.length > 0) {
+        setSavedDraft(draft)
+        setDraftAge(getDraftAge())
+        setShowDraftBanner(true)
+      }
+    }
+  }, []) // eslint-disable-line react-hooks/exhaustive-deps
+
+  // Auto-save whenever overlays or queues change
+  useEffect(() => {
+    if (overlays.length > 0 || queues.length > 0) {
+      saveDraft({ overlays, queues })
+    }
+  }, [overlays, queues, saveDraft])
+
+  // Restore draft
+  const handleRestoreDraft = useCallback(() => {
+    if (savedDraft) {
+      const restoredOverlays = savedDraft.overlays as OverlayConfig[]
+      const restoredQueues = savedDraft.queues as QueueConfig[]
+      setOverlays(restoredOverlays)
+      setQueues(restoredQueues)
+      setShowDraftBanner(false)
+      if (onConfigChange) {
+        const yaml = generateOverlayYaml(restoredOverlays, restoredQueues)
+        onConfigChange(restoredOverlays, restoredQueues, yaml)
+      }
+    }
+  }, [savedDraft, onConfigChange])
+
+  // Dismiss draft banner
+  const handleDismissDraft = useCallback(() => {
+    setShowDraftBanner(false)
+    clearDraft()
+  }, [clearDraft])
 
   // Get the selected overlay
   const selectedOverlay = useMemo(
@@ -161,6 +209,34 @@ function VisualOverlayEditor({
 
   return (
     <div className="visual-overlay-editor">
+      {/* Draft Recovery Banner */}
+      {showDraftBanner && (
+        <div className="draft-banner">
+          <div className="draft-banner-content">
+            <span className="draft-icon">📝</span>
+            <span className="draft-message">
+              You have unsaved work from {draftAge || 'a previous session'}
+            </span>
+          </div>
+          <div className="draft-actions">
+            <button
+              type="button"
+              className="btn btn-primary btn-sm"
+              onClick={handleRestoreDraft}
+            >
+              Restore
+            </button>
+            <button
+              type="button"
+              className="btn btn-secondary btn-sm"
+              onClick={handleDismissDraft}
+            >
+              Discard
+            </button>
+          </div>
+        </div>
+      )}
+
       {/* Header */}
       <div className="editor-header">
         <h2 className="editor-title">Overlay Editor</h2>
