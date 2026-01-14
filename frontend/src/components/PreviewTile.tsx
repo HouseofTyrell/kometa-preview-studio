@@ -1,8 +1,9 @@
-import { useState, useEffect, useCallback } from 'react'
+import { useState, useEffect, useCallback, useMemo } from 'react'
 import BeforeAfter from './BeforeAfter'
 import ComparisonView from './ComparisonView'
 import ZoomableImage from './ZoomableImage'
 import ZoomControls from './ZoomControls'
+import PosterSizeSelector, { POSTER_SIZES, EPISODE_SIZES } from './PosterSizeSelector'
 
 type ViewMode = 'before' | 'after' | 'compare'
 
@@ -43,6 +44,14 @@ function PreviewTile({
   // Default to "Before" if afterUrl is not available, otherwise show "After"
   const [viewMode, setViewMode] = useState<ViewMode>(afterUrl ? 'after' : 'before')
   const [zoom, setZoom] = useState(1)
+  const [posterSize, setPosterSize] = useState('auto')
+
+  // Get the current poster size dimensions
+  const sizes = mediaType === 'episode' ? EPISODE_SIZES : POSTER_SIZES
+  const currentSizeConfig = useMemo(
+    () => sizes.find((s) => s.name === posterSize) || sizes[0],
+    [posterSize, sizes]
+  )
 
   // Auto-switch to "After" when afterUrl becomes available (unless already comparing)
   useEffect(() => {
@@ -93,8 +102,14 @@ function PreviewTile({
       </div>
 
       <div
-        className={`tile-image-container ${mediaType === 'episode' ? 'landscape' : 'portrait'}`}
-        style={{ aspectRatio: getAspectRatio(mediaType) }}
+        className={`tile-image-container ${mediaType === 'episode' ? 'landscape' : 'portrait'} ${posterSize !== 'auto' ? 'fixed-size' : ''}`}
+        style={{
+          aspectRatio: posterSize === 'auto' ? getAspectRatio(mediaType) : undefined,
+          width: posterSize !== 'auto' ? `${currentSizeConfig.width}px` : undefined,
+          height: posterSize !== 'auto' ? `${currentSizeConfig.height}px` : undefined,
+          maxWidth: '100%',
+          maxHeight: posterSize !== 'auto' ? `${currentSizeConfig.height}px` : undefined,
+        }}
       >
         {isLoading && !hasImages && (
           <div className="tile-placeholder">
@@ -174,6 +189,12 @@ function PreviewTile({
               minZoom={MIN_ZOOM}
               maxZoom={MAX_ZOOM}
             />
+
+            <PosterSizeSelector
+              selectedSize={posterSize}
+              onSizeChange={setPosterSize}
+              mediaType={mediaType}
+            />
           </div>
 
           {afterUrl && (
@@ -228,6 +249,11 @@ function PreviewTile({
         .tile-image-container.landscape {
           /* Episode thumbnails are wider */
           min-height: 150px;
+        }
+
+        .tile-image-container.fixed-size {
+          aspect-ratio: unset;
+          margin: 0 auto;
         }
 
         .tile-placeholder {
