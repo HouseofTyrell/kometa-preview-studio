@@ -1,5 +1,6 @@
 import { useCallback, useState } from 'react'
 import { OverlayConfig } from '../../types/overlayConfig'
+import { exportOverlay } from '../../utils/overlayExport'
 
 interface ActiveOverlaysListProps {
   overlays: OverlayConfig[]
@@ -345,6 +346,21 @@ function ActiveOverlaysList({
               )}
               <button
                 type="button"
+                className="action-btn export"
+                onClick={(e) => {
+                  e.stopPropagation()
+                  exportOverlay(overlay)
+                }}
+                title="Export overlay"
+              >
+                <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                  <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" />
+                  <polyline points="7 10 12 15 17 10" />
+                  <line x1="12" y1="15" x2="12" y2="3" />
+                </svg>
+              </button>
+              <button
+                type="button"
                 className="action-btn delete"
                 onClick={(e) => {
                   e.stopPropagation()
@@ -640,6 +656,18 @@ function ActiveOverlaysList({
           background-color: var(--error);
           border-color: var(--error);
           color: white;
+        }
+
+        .action-btn.export {
+          display: flex;
+          align-items: center;
+          justify-content: center;
+        }
+
+        .action-btn.export:hover:not(:disabled) {
+          background-color: var(--accent-primary);
+          border-color: var(--accent-primary);
+          color: #000;
         }
 
         .action-btn:disabled {

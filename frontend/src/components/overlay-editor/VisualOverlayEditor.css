@@ -431,6 +431,63 @@
   background-color: var(--bg-secondary);
 }
 
+/* Import/Export Section */
+.import-export-section {
+  padding: 0.75rem;
+  border-top: 1px solid var(--border-color);
+  background-color: var(--bg-secondary);
+}
+
+.import-export-section .section-title {
+  font-size: 0.75rem;
+  font-weight: 600;
+  color: var(--text-secondary);
+  margin: 0 0 0.5rem 0;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+}
+
+.import-export-buttons {
+  display: flex;
+  gap: 0.5rem;
+}
+
+.import-export-btn {
+  flex: 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.375rem;
+  padding: 0.5rem 0.75rem;
+  background-color: var(--bg-primary);
+  border: 1px solid var(--border-color);
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+  font-size: 0.75rem;
+  font-weight: 500;
+  color: var(--text-secondary);
+  transition: all 0.15s;
+}
+
+.import-export-btn:hover:not(:disabled) {
+  border-color: var(--accent-primary);
+  color: var(--accent-primary);
+}
+
+.import-export-btn:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.import-error {
+  margin-top: 0.5rem;
+  padding: 0.5rem;
+  font-size: 0.75rem;
+  color: var(--error);
+  background-color: rgba(244, 67, 54, 0.1);
+  border-radius: var(--radius-sm);
+}
+
 @media (max-width: 900px) {
   .editor-content {
     grid-template-columns: 1fr;

@@ -1,4 +1,4 @@
-import { useState, useCallback, useMemo, useEffect } from 'react'
+import { useState, useCallback, useMemo, useEffect, useRef } from 'react'
 import BuiltinOverlayLibrary from './BuiltinOverlayLibrary'
 import OverlayPropertiesPanel from './OverlayPropertiesPanel'
 import ActiveOverlaysList from './ActiveOverlaysList'
@@ -14,6 +14,7 @@ import {
   createTextOverlayConfig,
 } from '../../types/overlayConfig'
 import { generateOverlayYaml } from '../../utils/overlayYamlGenerator'
+import { exportOverlays, parseImportedOverlays, readFileAsText } from '../../utils/overlayExport'
 import { useAutoSave, DraftData } from '../../hooks/useAutoSave'
 import { useUndoRedo } from '../../hooks/useUndoRedo'
 import './VisualOverlayEditor.css'
@@ -72,6 +73,8 @@ function VisualOverlayEditor({
   const [viewMode, setViewMode] = useState<'visual' | 'yaml'>('visual')
   const [showQueuesPanel, setShowQueuesPanel] = useState(false)
   const [clipboardOverlay, setClipboardOverlay] = useState<OverlayConfig | null>(null)
+  const [importError, setImportError] = useState<string | null>(null)
+  const fileInputRef = useRef<HTMLInputElement>(null)
 
   // Check for saved draft on mount (only if no initial data)
   useEffect(() => {
@@ -213,6 +216,48 @@ function VisualOverlayEditor({
       notifyChange(newOverlays)
     },
     [notifyChange, updateState]
+  )
+
+  // Export all overlays
+  const handleExportAll = useCallback(() => {
+    exportOverlays(overlays, queues)
+  }, [overlays, queues])
+
+  // Import overlays from file
+  const handleImportOverlays = useCallback(
+    async (event: React.ChangeEvent<HTMLInputElement>) => {
+      const file = event.target.files?.[0]
+      if (!file) return
+
+      try {
+        setImportError(null)
+        const content = await readFileAsText(file)
+        const result = parseImportedOverlays(content)
+
+        if ('error' in result) {
+          setImportError(result.error)
+          return
+        }
+
+        // Add imported overlays to existing ones
+        const newOverlays = [...overlays, ...result.overlays]
+        updateState({ overlays: newOverlays })
+        notifyChange(newOverlays)
+
+        // Select the first imported overlay
+        if (result.overlays.length > 0) {
+          setSelectedId(result.overlays[0].id)
+        }
+      } catch {
+        setImportError('Failed to read import file')
+      }
+
+      // Reset file input
+      if (fileInputRef.current) {
+        fileInputRef.current.value = ''
+      }
+    },
+    [overlays, notifyChange, updateState]
   )
 
   // Queue management
@@ -548,6 +593,49 @@ function VisualOverlayEditor({
               </button>
             </div>
             <CustomImageUpload onAddOverlay={handleAddCustomOverlay} disabled={disabled} />
+
+            {/* Import/Export Section */}
+            <div className="import-export-section">
+              <h4 className="section-title">Import / Export</h4>
+              <div className="import-export-buttons">
+                <input
+                  ref={fileInputRef}
+                  type="file"
+                  accept=".json"
+                  onChange={handleImportOverlays}
+                  style={{ display: 'none' }}
+                />
+                <button
+                  type="button"
+                  className="import-export-btn"
+                  onClick={() => fileInputRef.current?.click()}
+                  disabled={disabled}
+                >
+                  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                    <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" />
+                    <polyline points="17 8 12 3 7 8" />
+                    <line x1="12" y1="3" x2="12" y2="15" />
+                  </svg>
+                  Import
+                </button>
+                <button
+                  type="button"
+                  className="import-export-btn"
+                  onClick={handleExportAll}
+                  disabled={disabled || overlays.length === 0}
+                >
+                  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                    <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" />
+                    <polyline points="7 10 12 15 17 10" />
+                    <line x1="12" y1="15" x2="12" y2="3" />
+                  </svg>
+                  Export All
+                </button>
+              </div>
+              {importError && (
+                <div className="import-error">{importError}</div>
+              )}
+            </div>
           </div>
 
           {/* Center: Active List + Preview Area */}
