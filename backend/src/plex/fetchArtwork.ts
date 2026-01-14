@@ -3,8 +3,9 @@ import * as path from 'path';
 import { PlexClient } from './plexClient.js';
 import { ResolvedTarget } from './resolveTargets.js';
 import { pathExists } from '../util/safeFs.js';
+import { TmdbClient, KNOWN_TMDB_IDS } from './tmdbClient.js';
 
-export type ArtworkSource = 'asset_directory' | 'original_poster' | 'plex_current';
+export type ArtworkSource = 'asset_directory' | 'original_poster' | 'tmdb' | 'plex_current';
 
 export interface FetchedArtwork {
   targetId: string;
@@ -17,6 +18,7 @@ export interface ArtworkFetchOptions {
   assetDirectories: string[];
   originalPostersDir: string | null;
   inputDir: string;
+  tmdbClient?: TmdbClient | null;
 }
 
 /**
@@ -77,7 +79,27 @@ async function fetchTargetArtwork(
     }
   }
 
-  // 3. Fallback to Plex current artwork
+  // 3. TMDb clean poster (preferred over Plex current which may have overlays)
+  if (options.tmdbClient) {
+    const tmdbPosterUrl = await fetchTmdbPoster(target, options.tmdbClient);
+    if (tmdbPosterUrl) {
+      try {
+        const imageBuffer = await options.tmdbClient.downloadPoster(tmdbPosterUrl);
+        await fs.writeFile(localPath, imageBuffer);
+        return {
+          targetId: target.id,
+          source: 'tmdb',
+          localPath,
+          warnings,
+        };
+      } catch (err) {
+        console.error(`Failed to download TMDb poster for ${target.id}:`, err);
+        // Continue to fallback
+      }
+    }
+  }
+
+  // 4. Fallback to Plex current artwork (may contain overlays)
   if (target.thumbPath) {
     warnings.push(
       `Using Plex current artwork for ${target.label}. This may already contain overlays.`
@@ -241,4 +263,52 @@ function sanitizeFileName(name: string): string {
     .replace(/[<>:"/\\|?*]/g, '')
     .replace(/\s+/g, ' ')
     .trim();
+}
+
+/**
+ * Fetch poster URL from TMDb for a target
+ * Uses known TMDb IDs for preview targets, falls back to search API
+ */
+async function fetchTmdbPoster(
+  target: ResolvedTarget,
+  tmdbClient: TmdbClient
+): Promise<string | null> {
+  // Check if we have a known TMDb ID for this target
+  const known = KNOWN_TMDB_IDS[target.id];
+
+  if (known) {
+    switch (target.type) {
+      case 'movie':
+        return tmdbClient.getMoviePoster(known.id);
+
+      case 'show':
+        return tmdbClient.getTvShowPoster(known.id);
+
+      case 'season':
+        if (target.seasonIndex !== undefined) {
+          return tmdbClient.getSeasonPoster(known.id, target.seasonIndex);
+        }
+        return tmdbClient.getTvShowPoster(known.id);
+
+      case 'episode':
+        if (target.seasonIndex !== undefined && target.episodeIndex !== undefined) {
+          return tmdbClient.getEpisodeStill(known.id, target.seasonIndex, target.episodeIndex);
+        }
+        return null;
+    }
+  }
+
+  // Fall back to search API for unknown targets
+  switch (target.type) {
+    case 'movie':
+      return tmdbClient.searchMoviePoster(target.searchTitle, target.searchYear);
+
+    case 'show':
+    case 'season':
+    case 'episode':
+      return tmdbClient.searchTvPoster(target.searchTitle);
+
+    default:
+      return null;
+  }
 }

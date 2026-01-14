@@ -9,6 +9,7 @@ import { parseYaml, analyzeConfig, KometaConfig } from '../util/yaml.js';
 import { PlexClient } from '../plex/plexClient.js';
 import { resolveTargets, ResolvedTarget } from '../plex/resolveTargets.js';
 import { fetchArtwork, FetchedArtwork, ArtworkSource } from '../plex/fetchArtwork.js';
+import { createTmdbClient } from '../plex/tmdbClient.js';
 import { generatePreviewConfig } from '../kometa/configGenerator.js';
 import { TestOptions, DEFAULT_TEST_OPTIONS } from '../types/testOptions.js';
 
@@ -209,12 +210,25 @@ class JobManager extends EventEmitter {
         data: { progress: 30 },
       });
 
+      // Create TMDb client if API key is available in config
+      const tmdbConfig = config.tmdb as Record<string, unknown> | undefined;
+      const tmdbClient = tmdbConfig ? createTmdbClient(tmdbConfig as { apikey?: string }) : null;
+
+      if (tmdbClient) {
+        this.emit(`job:${jobId}`, {
+          type: 'log',
+          timestamp: new Date(),
+          message: 'TMDb API available - will fetch clean posters',
+        });
+      }
+
       const artwork = await fetchArtwork(plexClient, targets, {
         assetDirectories: analysis.assetDirectories,
         originalPostersDir: getUserPaths().userKometaConfigPath
           ? path.join(getUserPaths().userKometaConfigPath!, 'Original Posters')
           : null,
         inputDir: paths.inputDir,
+        tmdbClient,
       });
 
       // Update job targets

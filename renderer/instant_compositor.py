@@ -336,19 +336,12 @@ def run_instant_preview(job_path: Path) -> int:
         input_path = input_dir / f"{target_id}.jpg"
         output_path = draft_dir / f"{target_id}_draft.png"
 
-        # Also create a copy in the main output dir for immediate display
-        main_output_path = output_dir / f"{target_id}_after.png"
+        # NOTE: We no longer copy draft images to main output directory.
+        # Only Kometa's actual rendered output should be shown to users to
+        # ensure 100% accuracy. Draft images are saved to draft/ for debugging.
 
         if composite_overlays(input_path, output_path, metadata, target_type):
             success_count += 1
-
-            # Copy to main output for immediate display
-            try:
-                import shutil
-                shutil.copy(output_path, main_output_path)
-                print(f"  Copied to: {main_output_path.name}")
-            except Exception as e:
-                print(f"  Warning: Could not copy to main output: {e}")
 
     print(f"\n{'=' * 60}")
     print(f"Draft preview complete: {success_count}/{len(targets)} images created")

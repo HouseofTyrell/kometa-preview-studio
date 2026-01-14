@@ -5,16 +5,27 @@ interface PreviewTileProps {
   targetId: string
   label: string
   type: string
+  mediaType: 'movie' | 'show' | 'season' | 'episode'
   beforeUrl?: string
   afterUrl?: string
   isLoading: boolean
   jobId: string | null
 }
 
+/**
+ * Get aspect ratio based on media type
+ * - Episodes use 16:9 (landscape) for episode stills
+ * - Everything else uses 2:3 (portrait) for posters
+ */
+function getAspectRatio(mediaType: string): string {
+  return mediaType === 'episode' ? '16/9' : '2/3'
+}
+
 function PreviewTile({
   targetId,
   label,
   type,
+  mediaType,
   beforeUrl,
   afterUrl,
   isLoading,
@@ -54,7 +65,10 @@ function PreviewTile({
         </div>
       </div>
 
-      <div className="tile-image-container">
+      <div
+        className={`tile-image-container ${mediaType === 'episode' ? 'landscape' : 'portrait'}`}
+        style={{ aspectRatio: getAspectRatio(mediaType) }}
+      >
         {isLoading && !hasImages && (
           <div className="tile-placeholder">
             <div className="loading-spinner" />
@@ -136,13 +150,17 @@ function PreviewTile({
         }
 
         .tile-image-container {
-          aspect-ratio: 2/3;
           background-color: var(--bg-primary);
           border-radius: var(--radius-sm);
           overflow: hidden;
           display: flex;
           align-items: center;
           justify-content: center;
+        }
+
+        .tile-image-container.landscape {
+          /* Episode thumbnails are wider */
+          min-height: 150px;
         }
 
         .tile-placeholder {

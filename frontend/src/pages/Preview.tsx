@@ -275,6 +275,7 @@ function PreviewPage({
                   targetId={target.id}
                   label={target.label}
                   type={target.type}
+                  mediaType={target.mediaType as 'movie' | 'show' | 'season' | 'episode'}
                   beforeUrl={urls.beforeUrl}
                   afterUrl={urls.afterUrl}
                   isLoading={isRunning}
