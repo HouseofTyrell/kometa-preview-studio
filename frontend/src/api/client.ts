@@ -69,6 +69,29 @@ export interface SystemActionResult {
 }
 
 /**
+ * Create a new config from Plex credentials (start from scratch)
+ */
+export async function createFromCredentials(
+  plexUrl: string,
+  plexToken: string
+): Promise<{ analysis: ConfigAnalysis; configYaml: string }> {
+  const response = await fetch(`${API_BASE}/config/new`, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify({ plexUrl, plexToken }),
+  });
+
+  if (!response.ok) {
+    const error = await response.json();
+    throw new Error(error.details || error.error || 'Failed to create config');
+  }
+
+  return response.json();
+}
+
+/**
  * Upload or submit a Kometa config
  */
 export async function uploadConfig(configYaml: string): Promise<ConfigAnalysis> {

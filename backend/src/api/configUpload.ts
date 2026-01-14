@@ -6,6 +6,107 @@ import { getProfileStore, ProfileData } from '../storage/profileStore.js';
 const router = Router();
 
 /**
+ * Generate a minimal Kometa config from Plex credentials
+ */
+function generateMinimalConfig(plexUrl: string, plexToken: string): string {
+  return `# Kometa Preview Studio - Generated Config
+# Created: ${new Date().toISOString()}
+
+plex:
+  url: ${plexUrl}
+  token: ${plexToken}
+  timeout: 60
+
+settings:
+  cache: true
+  cache_expiration: 60
+
+# Add your libraries below
+# Example:
+# libraries:
+#   Movies:
+#     overlay_files:
+#       - pmm: resolution
+`;
+}
+
+/**
+ * POST /api/config/new
+ * Create a new config from Plex credentials (start from scratch)
+ */
+router.post('/new', async (req: Request, res: Response) => {
+  try {
+    const { plexUrl, plexToken } = req.body;
+
+    // Validate inputs
+    if (!plexUrl || typeof plexUrl !== 'string') {
+      res.status(400).json({ error: 'plexUrl is required and must be a string' });
+      return;
+    }
+    if (!plexToken || typeof plexToken !== 'string') {
+      res.status(400).json({ error: 'plexToken is required and must be a string' });
+      return;
+    }
+
+    // Validate URL format
+    try {
+      new URL(plexUrl);
+    } catch {
+      res.status(400).json({ error: 'Invalid URL format for plexUrl' });
+      return;
+    }
+
+    // Generate minimal config
+    const configYaml = generateMinimalConfig(plexUrl.trim(), plexToken.trim());
+
+    // Parse and analyze (should succeed since we generated valid YAML)
+    const parsed = parseYaml(configYaml);
+    if (!parsed.parsed) {
+      res.status(500).json({ error: 'Failed to generate valid config' });
+      return;
+    }
+
+    const config = parsed.parsed as KometaConfig;
+    const analysis = analyzeConfig(config);
+
+    // Create profile
+    const profileId = generateProfileId();
+    const profile: ProfileData = {
+      id: profileId,
+      configYaml,
+      analysis,
+      createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString(),
+    };
+
+    const store = getProfileStore();
+    await store.set(profileId, profile);
+
+    // Return both analysis and the generated config
+    res.json({
+      analysis: {
+        profileId,
+        plexUrl: analysis.plexUrl,
+        tokenPresent: analysis.tokenPresent,
+        assetDirectories: analysis.assetDirectories,
+        overlayFiles: analysis.overlayFiles,
+        libraryNames: analysis.libraryNames,
+        warnings: analysis.warnings,
+        overlayYaml: analysis.overlayYaml,
+      },
+      configYaml,
+    });
+
+  } catch (err) {
+    console.error('Config creation error:', err);
+    res.status(500).json({
+      error: 'Failed to create configuration',
+      details: err instanceof Error ? err.message : 'Unknown error',
+    });
+  }
+});
+
+/**
  * POST /api/config
  * Upload or paste a Kometa config.yml
  */

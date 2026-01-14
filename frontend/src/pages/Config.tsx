@@ -1,7 +1,11 @@
 import { useState } from 'react'
 import ConfigUploader from '../components/ConfigUploader'
+import PlexCredentialsForm from '../components/PlexCredentialsForm'
 import OverlayEditor from '../components/OverlayEditor'
 import { ConfigAnalysis, runSystemAction, SystemAction, SystemActionResult } from '../api/client'
+import './Config.css'
+
+type EntryMode = 'choice' | 'import' | 'scratch'
 
 interface ConfigPageProps {
   currentConfig: string
@@ -14,6 +18,7 @@ interface ConfigPageProps {
 }
 
 function ConfigPage({ currentConfig, onConfigUpdate }: ConfigPageProps) {
+  const [entryMode, setEntryMode] = useState<EntryMode>(currentConfig ? 'import' : 'choice')
   const [analysis, setAnalysis] = useState<ConfigAnalysis | null>(null)
   const [configYaml, setConfigYaml] = useState(currentConfig)
   const [systemAction, setSystemAction] = useState<SystemAction | null>(null)
@@ -23,6 +28,19 @@ function ConfigPage({ currentConfig, onConfigUpdate }: ConfigPageProps) {
   const handleConfigUploaded = (newAnalysis: ConfigAnalysis, yaml: string) => {
     setAnalysis(newAnalysis)
     setConfigYaml(yaml)
+    setEntryMode('import')
+    onConfigUpdate(
+      newAnalysis.profileId,
+      yaml,
+      newAnalysis.libraryNames,
+      newAnalysis.overlayFiles
+    )
+  }
+
+  const handleScratchSuccess = (newAnalysis: ConfigAnalysis, yaml: string) => {
+    setAnalysis(newAnalysis)
+    setConfigYaml(yaml)
+    setEntryMode('scratch')
     onConfigUpdate(
       newAnalysis.profileId,
       yaml,
@@ -43,6 +61,12 @@ function ConfigPage({ currentConfig, onConfigUpdate }: ConfigPageProps) {
     }
   }
 
+  const handleReset = () => {
+    setEntryMode('choice')
+    setAnalysis(null)
+    setConfigYaml('')
+  }
+
   const triggerSystemAction = async (action: SystemAction) => {
     setSystemAction(action)
     setSystemResult(null)
@@ -57,21 +81,117 @@ function ConfigPage({ currentConfig, onConfigUpdate }: ConfigPageProps) {
     }
   }
 
+  // Show entry mode choice if no config loaded yet
+  if (entryMode === 'choice') {
+    return (
+      <div className="page">
+        <div>
+          <h1 className="page-title">Get Started</h1>
+          <p className="page-description">
+            Choose how you want to start working with overlay configurations
+          </p>
+        </div>
+
+        <div className="entry-choice-grid">
+          <button
+            type="button"
+            className="entry-choice-card"
+            onClick={() => setEntryMode('import')}
+          >
+            <span className="choice-icon">📁</span>
+            <h3 className="choice-title">Import Existing Config</h3>
+            <p className="choice-description">
+              Upload or paste an existing Kometa config.yml file to edit and preview overlays
+            </p>
+          </button>
+
+          <button
+            type="button"
+            className="entry-choice-card"
+            onClick={() => setEntryMode('scratch')}
+          >
+            <span className="choice-icon">✨</span>
+            <h3 className="choice-title">Start from Scratch</h3>
+            <p className="choice-description">
+              Enter your Plex credentials and create new overlays using the visual editor
+            </p>
+          </button>
+        </div>
+      </div>
+    )
+  }
+
+  // Show scratch form (Plex credentials entry)
+  if (entryMode === 'scratch' && !analysis) {
+    return (
+      <div className="page">
+        <div>
+          <h1 className="page-title">Start from Scratch</h1>
+          <p className="page-description">
+            Connect to your Plex server to get started
+          </p>
+        </div>
+
+        <div className="config-layout">
+          <div className="config-main">
+            <PlexCredentialsForm
+              onSuccess={handleScratchSuccess}
+              onCancel={() => setEntryMode('choice')}
+            />
+          </div>
+          <div className="config-sidebar">
+            <div className="card">
+              <h2 className="card-title">What you'll need</h2>
+              <ul className="requirements-list">
+                <li>Your Plex server URL</li>
+                <li>Your Plex authentication token</li>
+              </ul>
+              <p className="text-muted text-sm mt-2">
+                Don't worry, your credentials are only used to connect to your server
+                and are not stored externally.
+              </p>
+            </div>
+          </div>
+        </div>
+      </div>
+    )
+  }
+
   return (
     <div className="page">
-      <div>
-        <h1 className="page-title">Configuration</h1>
-        <p className="page-description">
-          Upload or paste your Kometa config.yml to get started
-        </p>
+      <div className="page-header-row">
+        <div>
+          <h1 className="page-title">Configuration</h1>
+          <p className="page-description">
+            {analysis
+              ? 'Edit your overlay configuration and preview changes'
+              : 'Upload or paste your Kometa config.yml to get started'}
+          </p>
+        </div>
+        {analysis && (
+          <button type="button" className="btn btn-secondary btn-sm" onClick={handleReset}>
+            Start Over
+          </button>
+        )}
       </div>
 
       <div className="config-layout">
         <div className="config-main">
-          <ConfigUploader
-            onConfigUploaded={handleConfigUploaded}
-            initialConfig={configYaml}
-          />
+          {!analysis && entryMode === 'import' && (
+            <>
+              <ConfigUploader
+                onConfigUploaded={handleConfigUploaded}
+                initialConfig={configYaml}
+              />
+              <button
+                type="button"
+                className="btn btn-secondary mt-2"
+                onClick={() => setEntryMode('choice')}
+              >
+                Back to Options
+              </button>
+            </>
+          )}
 
           {analysis && (
             <div className="card">
@@ -160,6 +280,7 @@ function ConfigPage({ currentConfig, onConfigUpdate }: ConfigPageProps) {
 
             <div className="system-controls">
               <button
+                type="button"
                 className="btn btn-primary"
                 onClick={() => triggerSystemAction('start')}
                 disabled={systemAction !== null}
@@ -167,6 +288,7 @@ function ConfigPage({ currentConfig, onConfigUpdate }: ConfigPageProps) {
                 {systemAction === 'start' ? 'Starting…' : 'Start'}
               </button>
               <button
+                type="button"
                 className="btn btn-secondary"
                 onClick={() => triggerSystemAction('stop')}
                 disabled={systemAction !== null}
@@ -174,6 +296,7 @@ function ConfigPage({ currentConfig, onConfigUpdate }: ConfigPageProps) {
                 {systemAction === 'stop' ? 'Stopping…' : 'Stop'}
               </button>
               <button
+                type="button"
                 className="btn btn-secondary"
                 onClick={() => triggerSystemAction('reset')}
                 disabled={systemAction !== null}
@@ -217,110 +340,6 @@ function ConfigPage({ currentConfig, onConfigUpdate }: ConfigPageProps) {
           </div>
         </div>
       </div>
-
-      <style>{`
-        .config-layout {
-          display: grid;
-          grid-template-columns: 1fr 320px;
-          gap: 1.5rem;
-          align-items: start;
-        }
-
-        @media (max-width: 1024px) {
-          .config-layout {
-            grid-template-columns: 1fr;
-          }
-
-          .config-sidebar {
-            order: -1;
-          }
-        }
-
-        .config-main {
-          display: flex;
-          flex-direction: column;
-          gap: 1.5rem;
-        }
-
-        .config-sidebar {
-          position: sticky;
-          top: 1rem;
-        }
-
-        .config-item {
-          display: flex;
-          gap: 0.5rem;
-          font-size: 0.875rem;
-        }
-
-        .config-label {
-          color: var(--text-secondary);
-          min-width: 120px;
-        }
-
-        .config-value {
-          color: var(--text-primary);
-        }
-
-        .warnings-list {
-          display: flex;
-          flex-direction: column;
-          gap: 0.5rem;
-        }
-
-        .system-controls {
-          display: flex;
-          flex-direction: column;
-          gap: 0.5rem;
-          margin-top: 1rem;
-        }
-
-        .system-controls .btn {
-          width: 100%;
-          justify-content: center;
-        }
-
-        .system-result {
-          margin-top: 1rem;
-          padding: 0.75rem;
-          border-radius: var(--radius-sm);
-          background-color: var(--bg-tertiary);
-          border: 1px solid var(--border-color);
-        }
-
-        .system-result-header {
-          display: flex;
-          justify-content: space-between;
-          align-items: center;
-          font-weight: 600;
-          font-size: 0.85rem;
-          margin-bottom: 0.5rem;
-        }
-
-        .system-result-meta {
-          display: flex;
-          flex-direction: column;
-          gap: 0.25rem;
-          font-size: 0.75rem;
-          color: var(--text-secondary);
-          margin-bottom: 0.5rem;
-        }
-
-        .system-log {
-          white-space: pre-wrap;
-          background: var(--bg-primary);
-          border-radius: var(--radius-sm);
-          padding: 0.75rem;
-          max-height: 180px;
-          overflow-y: auto;
-          font-size: 0.7rem;
-          color: var(--text-secondary);
-        }
-
-        .text-sm {
-          font-size: 0.875rem;
-        }
-      `}</style>
     </div>
   )
 }
