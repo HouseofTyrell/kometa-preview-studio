@@ -1,6 +1,7 @@
-import { useState, useEffect, useCallback } from 'react'
+import { useState, useEffect, useCallback, useMemo } from 'react'
 import PreviewTile from '../components/PreviewTile'
 import LogPanel from '../components/LogPanel'
+import TestOptionsPanel from '../components/TestOptionsPanel'
 import {
   startPreview,
   getJobStatus,
@@ -10,31 +11,73 @@ import {
   JobArtifacts,
   JobEvent,
 } from '../api/client'
+import { TestOptions, DEFAULT_TEST_OPTIONS } from '../types/testOptions'
 
 interface PreviewPageProps {
   profileId: string | null
   configYaml: string
+  libraryNames?: string[]
+  overlayFiles?: string[]
 }
 
 const PREVIEW_TARGETS = [
-  { id: 'matrix', label: 'The Matrix (1999)', type: 'Movie' },
-  { id: 'dune', label: 'Dune (2021)', type: 'Movie' },
-  { id: 'breakingbad_series', label: 'Breaking Bad', type: 'Series' },
-  { id: 'breakingbad_s01', label: 'Breaking Bad', type: 'Season 1' },
-  { id: 'breakingbad_s01e01', label: 'Breaking Bad', type: 'S01E01' },
+  { id: 'matrix', label: 'The Matrix (1999)', type: 'Movie', mediaType: 'movie' },
+  { id: 'dune', label: 'Dune (2021)', type: 'Movie', mediaType: 'movie' },
+  { id: 'breakingbad_series', label: 'Breaking Bad', type: 'Series', mediaType: 'show' },
+  { id: 'breakingbad_s01', label: 'Breaking Bad', type: 'Season 1', mediaType: 'season' },
+  { id: 'breakingbad_s01e01', label: 'Breaking Bad', type: 'S01E01', mediaType: 'episode' },
 ]
 
-function PreviewPage({ profileId, configYaml }: PreviewPageProps) {
+function PreviewPage({
+  profileId,
+  configYaml,
+  libraryNames = [],
+  overlayFiles = [],
+}: PreviewPageProps) {
   const [jobId, setJobId] = useState<string | null>(null)
   const [status, setStatus] = useState<JobStatus | null>(null)
   const [artifacts, setArtifacts] = useState<JobArtifacts | null>(null)
   const [logs, setLogs] = useState<JobEvent[]>([])
   const [error, setError] = useState<string | null>(null)
   const [isRunning, setIsRunning] = useState(false)
+  const [testOptions, setTestOptions] = useState<TestOptions>(DEFAULT_TEST_OPTIONS)
+
+  // Calculate which targets to display based on test options
+  const visibleTargets = useMemo(() => {
+    let targets = PREVIEW_TARGETS
+
+    // Filter by media types
+    targets = targets.filter((t) => {
+      switch (t.mediaType) {
+        case 'movie':
+          return testOptions.mediaTypes.movies
+        case 'show':
+          return testOptions.mediaTypes.shows
+        case 'season':
+          return testOptions.mediaTypes.seasons
+        case 'episode':
+          return testOptions.mediaTypes.episodes
+        default:
+          return true
+      }
+    })
+
+    // Filter by selected targets
+    if (testOptions.selectedTargets.length > 0) {
+      targets = targets.filter((t) => testOptions.selectedTargets.includes(t.id))
+    }
+
+    return targets
+  }, [testOptions])
 
   const handleStartPreview = async () => {
     if (!configYaml) {
       setError('Please upload a config first')
+      return
+    }
+
+    if (visibleTargets.length === 0) {
+      setError('Please select at least one target to preview')
       return
     }
 
@@ -47,6 +90,7 @@ function PreviewPage({ profileId, configYaml }: PreviewPageProps) {
       const result = await startPreview({
         profileId: profileId || undefined,
         configYaml: profileId ? undefined : configYaml,
+        testOptions,
       })
 
       setJobId(result.jobId)
@@ -162,6 +206,17 @@ function PreviewPage({ profileId, configYaml }: PreviewPageProps) {
         </div>
       </div>
 
+      {/* Test Options Panel */}
+      {hasConfig && (
+        <TestOptionsPanel
+          options={testOptions}
+          onChange={setTestOptions}
+          libraryNames={libraryNames}
+          overlayFiles={overlayFiles}
+          disabled={isRunning}
+        />
+      )}
+
       {!hasConfig && (
         <div className="alert alert-warning">
           Please upload a Kometa config.yml on the Config page before running a preview.
@@ -207,21 +262,27 @@ function PreviewPage({ profileId, configYaml }: PreviewPageProps) {
 
       <div className="preview-content">
         <div className="preview-grid">
-          {PREVIEW_TARGETS.map((target) => {
-            const urls = getArtifactUrls(target.id)
-            return (
-              <PreviewTile
-                key={target.id}
-                targetId={target.id}
-                label={target.label}
-                type={target.type}
-                beforeUrl={urls.beforeUrl}
-                afterUrl={urls.afterUrl}
-                isLoading={isRunning}
-                jobId={jobId}
-              />
-            )
-          })}
+          {visibleTargets.length === 0 ? (
+            <div className="no-targets-message">
+              No targets selected. Expand "Test Options" above to select targets.
+            </div>
+          ) : (
+            visibleTargets.map((target) => {
+              const urls = getArtifactUrls(target.id)
+              return (
+                <PreviewTile
+                  key={target.id}
+                  targetId={target.id}
+                  label={target.label}
+                  type={target.type}
+                  beforeUrl={urls.beforeUrl}
+                  afterUrl={urls.afterUrl}
+                  isLoading={isRunning}
+                  jobId={jobId}
+                />
+              )
+            })
+          )}
         </div>
 
         <LogPanel logs={logs} />
@@ -282,6 +343,16 @@ function PreviewPage({ profileId, configYaml }: PreviewPageProps) {
           display: grid;
           grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
           gap: 1.5rem;
+        }
+
+        .no-targets-message {
+          grid-column: 1 / -1;
+          text-align: center;
+          padding: 3rem;
+          color: var(--text-muted);
+          background-color: var(--bg-secondary);
+          border-radius: var(--radius-md);
+          border: 1px dashed var(--border-color);
         }
       `}</style>
     </div>

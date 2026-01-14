@@ -1,6 +1,8 @@
 import { Router, Request, Response } from 'express';
 import { getJobManager } from '../jobs/jobManager.js';
 import { profiles } from './configUpload.js';
+import { TestOptions, DEFAULT_TEST_OPTIONS } from '../types/testOptions.js';
+import { getAvailableTargets } from '../plex/resolveTargets.js';
 
 const router = Router();
 
@@ -10,7 +12,7 @@ const router = Router();
  */
 router.post('/start', async (req: Request, res: Response) => {
   try {
-    const { profileId, configYaml: directConfigYaml } = req.body;
+    const { profileId, configYaml: directConfigYaml, testOptions } = req.body;
 
     let configYaml: string;
 
@@ -31,9 +33,14 @@ router.post('/start', async (req: Request, res: Response) => {
       return;
     }
 
-    // Create job
+    // Parse test options with defaults
+    const options: TestOptions = testOptions
+      ? { ...DEFAULT_TEST_OPTIONS, ...testOptions }
+      : DEFAULT_TEST_OPTIONS;
+
+    // Create job with test options
     const jobManager = getJobManager();
-    const jobId = await jobManager.createJob(configYaml);
+    const jobId = await jobManager.createJob(configYaml, options);
 
     res.json({
       jobId,
@@ -49,6 +56,15 @@ router.post('/start', async (req: Request, res: Response) => {
       details: err instanceof Error ? err.message : 'Unknown error',
     });
   }
+});
+
+/**
+ * GET /api/preview/targets
+ * Get available preview targets
+ */
+router.get('/targets', (_req: Request, res: Response) => {
+  const targets = getAvailableTargets();
+  res.json({ targets });
 });
 
 export default router;

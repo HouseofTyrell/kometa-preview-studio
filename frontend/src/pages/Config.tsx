@@ -5,7 +5,12 @@ import { ConfigAnalysis } from '../api/client'
 
 interface ConfigPageProps {
   currentConfig: string
-  onConfigUpdate: (profileId: string, configYaml: string) => void
+  onConfigUpdate: (
+    profileId: string,
+    configYaml: string,
+    libraryNames?: string[],
+    overlayFiles?: string[]
+  ) => void
 }
 
 function ConfigPage({ currentConfig, onConfigUpdate }: ConfigPageProps) {
@@ -15,13 +20,23 @@ function ConfigPage({ currentConfig, onConfigUpdate }: ConfigPageProps) {
   const handleConfigUploaded = (newAnalysis: ConfigAnalysis, yaml: string) => {
     setAnalysis(newAnalysis)
     setConfigYaml(yaml)
-    onConfigUpdate(newAnalysis.profileId, yaml)
+    onConfigUpdate(
+      newAnalysis.profileId,
+      yaml,
+      newAnalysis.libraryNames,
+      newAnalysis.overlayFiles
+    )
   }
 
   const handleConfigEdit = (yaml: string) => {
     setConfigYaml(yaml)
     if (analysis) {
-      onConfigUpdate(analysis.profileId, yaml)
+      onConfigUpdate(
+        analysis.profileId,
+        yaml,
+        analysis.libraryNames,
+        analysis.overlayFiles
+      )
     }
   }
 

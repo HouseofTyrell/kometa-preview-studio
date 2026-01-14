@@ -6,6 +6,8 @@ import PreviewPage from './pages/Preview'
 interface AppState {
   profileId: string | null
   configYaml: string
+  libraryNames: string[]
+  overlayFiles: string[]
 }
 
 function NavHeader() {
@@ -38,10 +40,17 @@ function App() {
   const [appState, setAppState] = useState<AppState>({
     profileId: null,
     configYaml: '',
+    libraryNames: [],
+    overlayFiles: [],
   })
 
-  const updateConfig = (profileId: string, configYaml: string) => {
-    setAppState({ profileId, configYaml })
+  const updateConfig = (
+    profileId: string,
+    configYaml: string,
+    libraryNames: string[] = [],
+    overlayFiles: string[] = []
+  ) => {
+    setAppState({ profileId, configYaml, libraryNames, overlayFiles })
   }
 
   return (
@@ -65,6 +74,8 @@ function App() {
                 <PreviewPage
                   profileId={appState.profileId}
                   configYaml={appState.configYaml}
+                  libraryNames={appState.libraryNames}
+                  overlayFiles={appState.overlayFiles}
                 />
               }
             />

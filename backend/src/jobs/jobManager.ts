@@ -10,6 +10,7 @@ import { PlexClient } from '../plex/plexClient.js';
 import { resolveTargets, ResolvedTarget } from '../plex/resolveTargets.js';
 import { fetchArtwork, FetchedArtwork, ArtworkSource } from '../plex/fetchArtwork.js';
 import { generatePreviewConfig } from '../kometa/configGenerator.js';
+import { TestOptions, DEFAULT_TEST_OPTIONS } from '../types/testOptions.js';
 
 export type JobStatus = 'pending' | 'running' | 'completed' | 'failed' | 'cancelled';
 
@@ -78,8 +79,10 @@ class JobManager extends EventEmitter {
 
   /**
    * Create a new preview job from config YAML
+   * @param configYaml - The Kometa configuration YAML
+   * @param testOptions - Optional test options for selective testing
    */
-  async createJob(configYaml: string): Promise<string> {
+  async createJob(configYaml: string, testOptions?: TestOptions): Promise<string> {
     const jobId = uuidv4();
     const paths = getJobPaths(jobId);
 
@@ -103,6 +106,9 @@ class JobManager extends EventEmitter {
     await ensureDir(paths.configDir);
     await ensureDir(paths.logsDir);
 
+    // Use provided test options or defaults
+    const options = testOptions || DEFAULT_TEST_OPTIONS;
+
     // Initialize job metadata
     const jobMeta: JobMeta = {
       jobId,
@@ -125,7 +131,7 @@ class JobManager extends EventEmitter {
     });
 
     // Start job processing in background
-    this.processJob(jobId, config, analysis).catch((err) => {
+    this.processJob(jobId, config, analysis, options).catch((err) => {
       console.error(`Job ${jobId} failed:`, err);
       this.updateJobStatus(jobId, 'failed', 0, err.message);
     });
@@ -135,8 +141,17 @@ class JobManager extends EventEmitter {
 
   /**
    * Process a job - resolve targets, fetch artwork, run renderer
+   * @param jobId - The job ID
+   * @param config - The parsed Kometa config
+   * @param analysis - The config analysis results
+   * @param testOptions - Test options for selective testing
    */
-  private async processJob(jobId: string, config: KometaConfig, analysis: ReturnType<typeof analyzeConfig>): Promise<void> {
+  private async processJob(
+    jobId: string,
+    config: KometaConfig,
+    analysis: ReturnType<typeof analyzeConfig>,
+    testOptions: TestOptions
+  ): Promise<void> {
     const paths = getJobPaths(jobId);
 
     try {
@@ -164,7 +179,7 @@ class JobManager extends EventEmitter {
         message: 'Plex connection successful',
       });
 
-      // Resolve targets
+      // Resolve targets (filtered by test options)
       await this.updateJobStatus(jobId, 'running', 15);
       this.emit(`job:${jobId}`, {
         type: 'progress',
@@ -173,11 +188,16 @@ class JobManager extends EventEmitter {
         data: { progress: 15 },
       });
 
-      const targets = await resolveTargets(plexClient);
+      const targets = await resolveTargets(plexClient, testOptions);
+
+      if (targets.length === 0) {
+        throw new Error('No targets selected for preview. Please select at least one target or media type.');
+      }
+
       this.emit(`job:${jobId}`, {
         type: 'log',
         timestamp: new Date(),
-        message: `Resolved ${targets.length} targets`,
+        message: `Resolved ${targets.length} target(s) for preview`,
       });
 
       // Fetch artwork
@@ -230,11 +250,17 @@ class JobManager extends EventEmitter {
         data: { progress: 45 },
       });
 
-      const generated = generatePreviewConfig(config, targets, artwork, {
-        inputDir: paths.inputDir,
-        outputDir: paths.outputDir,
-        configDir: paths.configDir,
-      });
+      const generated = generatePreviewConfig(
+        config,
+        targets,
+        artwork,
+        {
+          inputDir: paths.inputDir,
+          outputDir: paths.outputDir,
+          configDir: paths.configDir,
+        },
+        testOptions
+      );
 
       // Write preview config
       await writeText(path.join(paths.configDir, 'preview.yml'), generated.configYaml);

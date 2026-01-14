@@ -2,6 +2,7 @@ import * as path from 'path';
 import { KometaConfig, stringifyYaml } from '../util/yaml.js';
 import { ResolvedTarget } from '../plex/resolveTargets.js';
 import { FetchedArtwork } from '../plex/fetchArtwork.js';
+import { TestOptions } from '../types/testOptions.js';
 
 export interface GeneratedConfig {
   configYaml: string;
@@ -18,12 +19,19 @@ export interface GeneratedConfig {
  * 3. Includes metadata about preview targets for the renderer
  *
  * The renderer will run Kometa with write blocking to capture outputs.
+ *
+ * @param originalConfig - The original Kometa config
+ * @param targets - Resolved preview targets
+ * @param artwork - Fetched artwork for targets
+ * @param jobPaths - Job directory paths
+ * @param testOptions - Optional test options for selective testing
  */
 export function generatePreviewConfig(
   originalConfig: KometaConfig,
   targets: ResolvedTarget[],
   artwork: FetchedArtwork[],
-  jobPaths: { inputDir: string; outputDir: string; configDir: string }
+  jobPaths: { inputDir: string; outputDir: string; configDir: string },
+  testOptions?: TestOptions
 ): GeneratedConfig {
   // Create target mapping for input/output files
   const targetMapping: Record<string, { inputPath: string; outputPath: string }> = {};
@@ -38,8 +46,8 @@ export function generatePreviewConfig(
     }
   }
 
-  // Generate a valid Kometa config
-  const previewConfig = buildKometaConfig(originalConfig, targets, targetMapping);
+  // Generate a valid Kometa config (with optional library/overlay filtering)
+  const previewConfig = buildKometaConfig(originalConfig, targets, targetMapping, testOptions);
   const configYaml = stringifyYaml(previewConfig);
 
   // The renderer script is no longer used - kept for interface compatibility
@@ -57,11 +65,17 @@ export function generatePreviewConfig(
  *
  * This produces a config that Kometa can actually run.
  * The renderer's write-blocker will prevent any Plex modifications.
+ *
+ * @param originalConfig - The original Kometa config
+ * @param targets - Resolved preview targets
+ * @param targetMapping - Mapping of target IDs to input/output paths
+ * @param testOptions - Optional test options for filtering libraries/overlays
  */
 function buildKometaConfig(
   originalConfig: KometaConfig,
   targets: ResolvedTarget[],
-  targetMapping: Record<string, { inputPath: string; outputPath: string }>
+  targetMapping: Record<string, { inputPath: string; outputPath: string }>,
+  testOptions?: TestOptions
 ): Record<string, unknown> {
   const config: Record<string, unknown> = {};
 
@@ -122,19 +136,35 @@ function buildKometaConfig(
     run_order: ['overlays'],
   };
 
-  // Copy libraries with overlay definitions
+  // Copy libraries with overlay definitions (filtered by test options)
   if (originalConfig.libraries) {
     const libraries: Record<string, unknown> = {};
 
     for (const [libName, libConfig] of Object.entries(originalConfig.libraries)) {
+      // Filter by selected libraries if specified
+      if (testOptions?.selectedLibraries && testOptions.selectedLibraries.length > 0) {
+        if (!testOptions.selectedLibraries.includes(libName)) {
+          continue;
+        }
+      }
+
       if (libConfig.overlay_files) {
-        libraries[libName] = {
-          overlay_files: libConfig.overlay_files,
-          // Disable other operations for preview
-          operations: null,
-          collections: null,
-          metadata: null,
-        };
+        // Filter overlay files if specified
+        let overlayFiles = libConfig.overlay_files;
+        if (testOptions?.selectedOverlays && testOptions.selectedOverlays.length > 0) {
+          overlayFiles = filterOverlayFiles(overlayFiles, testOptions.selectedOverlays);
+        }
+
+        // Only include library if it has overlays after filtering
+        if (overlayFiles.length > 0) {
+          libraries[libName] = {
+            overlay_files: overlayFiles,
+            // Disable other operations for preview
+            operations: null,
+            collections: null,
+            metadata: null,
+          };
+        }
       }
     }
 
@@ -181,6 +211,37 @@ function buildKometaConfig(
   };
 
   return config;
+}
+
+/**
+ * Filter overlay files based on selected overlays
+ * @param overlayFiles - Array of overlay file references
+ * @param selectedOverlays - Array of selected overlay identifiers
+ */
+function filterOverlayFiles(
+  overlayFiles: Array<string | Record<string, unknown>>,
+  selectedOverlays: string[]
+): Array<string | Record<string, unknown>> {
+  return overlayFiles.filter((overlayFile) => {
+    if (typeof overlayFile === 'string') {
+      // Direct path: check if the path matches any selected overlay
+      return selectedOverlays.some((selected) =>
+        overlayFile.includes(selected) || selected.includes(overlayFile)
+      );
+    } else if (typeof overlayFile === 'object' && overlayFile !== null) {
+      // Object format: { pmm: "...", file: "...", etc. }
+      const keys = Object.keys(overlayFile);
+      for (const key of keys) {
+        const value = String((overlayFile as Record<string, unknown>)[key]);
+        const identifier = `${key}: ${value}`;
+        if (selectedOverlays.includes(identifier) || selectedOverlays.includes(value)) {
+          return true;
+        }
+      }
+      return false;
+    }
+    return false;
+  });
 }
 
 /**

@@ -1,4 +1,5 @@
 import { PlexClient, PlexMediaItem } from './plexClient.js';
+import { TestOptions, getMediaTypeKey } from '../types/testOptions.js';
 
 /**
  * Preview metadata for fast overlay rendering without TMDb queries
@@ -146,15 +147,23 @@ export const PREVIEW_TARGETS: PreviewTarget[] = [
 
 /**
  * Resolve all preview targets from Plex
+ * @param client - Plex client instance
+ * @param testOptions - Optional test options to filter targets
  */
-export async function resolveTargets(client: PlexClient): Promise<ResolvedTarget[]> {
+export async function resolveTargets(
+  client: PlexClient,
+  testOptions?: TestOptions
+): Promise<ResolvedTarget[]> {
   const results: ResolvedTarget[] = [];
+
+  // Filter targets based on test options
+  const targetsToResolve = filterTargets(PREVIEW_TARGETS, testOptions);
 
   // Cache for Breaking Bad show to avoid repeated searches
   let breakingBadShow: PlexMediaItem | null = null;
   let breakingBadSeason1: PlexMediaItem | null = null;
 
-  for (const target of PREVIEW_TARGETS) {
+  for (const target of targetsToResolve) {
     const resolved = await resolveTarget(client, target, {
       breakingBadShow,
       breakingBadSeason1,
@@ -365,4 +374,49 @@ function selectBestMatch(
 
   // Fall back to first result
   return exactTitleMatches.length > 0 ? exactTitleMatches[0] : items[0];
+}
+
+/**
+ * Filter preview targets based on test options
+ */
+export function filterTargets(
+  targets: PreviewTarget[],
+  testOptions?: TestOptions
+): PreviewTarget[] {
+  if (!testOptions) {
+    return targets;
+  }
+
+  let filtered = [...targets];
+
+  // Filter by selected target IDs
+  if (testOptions.selectedTargets.length > 0) {
+    filtered = filtered.filter((t) => testOptions.selectedTargets.includes(t.id));
+  }
+
+  // Filter by media types
+  if (testOptions.mediaTypes) {
+    filtered = filtered.filter((t) => {
+      const key = getMediaTypeKey(t.type);
+      if (key === null) return true;
+      return testOptions.mediaTypes[key];
+    });
+  }
+
+  return filtered;
+}
+
+/**
+ * Get available targets with their selection state
+ */
+export function getAvailableTargets(): Array<{
+  id: string;
+  label: string;
+  type: string;
+}> {
+  return PREVIEW_TARGETS.map((t) => ({
+    id: t.id,
+    label: t.label,
+    type: t.type,
+  }));
 }
