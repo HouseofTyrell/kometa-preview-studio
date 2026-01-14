@@ -369,6 +369,84 @@ def build_synthetic_library_sections_xml(targets: List[Dict[str, Any]]) -> bytes
     return ET.tostring(root, encoding='unicode').encode('utf-8')
 
 
+def _build_media_element(metadata: Dict[str, Any]) -> ET.Element:
+    """
+    Build a Media XML element from preview metadata.
+
+    This allows overlays like resolution, audio_codec, etc. to match
+    without querying Plex for actual mediainfo.
+
+    Args:
+        metadata: Preview metadata dict with resolution, audioCodec, etc.
+
+    Returns:
+        Media XML element with Part child
+    """
+    # Map user-friendly resolution to Plex format
+    resolution_map = {
+        '4K': '4k',
+        '4k': '4k',
+        '2160p': '4k',
+        '1080p': '1080',
+        '1080': '1080',
+        '720p': '720',
+        '720': '720',
+        '480p': '480',
+        '480': '480',
+        'SD': 'sd',
+    }
+
+    # Map user-friendly audio codec to Plex format
+    audio_codec_map = {
+        'Dolby Atmos': 'truehd',
+        'TrueHD': 'truehd',
+        'truehd': 'truehd',
+        'DTS-HD MA': 'dca-ma',
+        'DTS-HD': 'dca-ma',
+        'dts-hd': 'dca-ma',
+        'DTS': 'dca',
+        'dts': 'dca',
+        'AAC': 'aac',
+        'aac': 'aac',
+        'AC3': 'ac3',
+        'ac3': 'ac3',
+        'EAC3': 'eac3',
+        'eac3': 'eac3',
+        'FLAC': 'flac',
+        'flac': 'flac',
+    }
+
+    media_attrs = {}
+
+    # Set video resolution
+    if metadata.get('resolution'):
+        res = metadata['resolution']
+        media_attrs['videoResolution'] = resolution_map.get(res, res.lower())
+
+    # Set audio codec
+    if metadata.get('audioCodec'):
+        codec = metadata['audioCodec']
+        media_attrs['audioCodec'] = audio_codec_map.get(codec, codec.lower())
+
+    # Set HDR/DV attributes
+    if metadata.get('hdr'):
+        media_attrs['videoProfile'] = 'hdr'
+    if metadata.get('dolbyVision'):
+        media_attrs['DOVIPresent'] = '1'
+
+    # Create Media element
+    media_elem = ET.Element('Media', media_attrs)
+
+    # Add Part child (required for some overlay matchers)
+    part_attrs = {}
+    if metadata.get('audioCodec'):
+        codec = metadata['audioCodec']
+        part_attrs['audioProfile'] = audio_codec_map.get(codec, codec.lower())
+    part_elem = ET.SubElement(media_elem, 'Part', part_attrs)
+
+    return media_elem
+
+
 def build_synthetic_listing_xml(
     targets: List[Dict[str, Any]],
     section_id: Optional[str] = None,
@@ -423,6 +501,9 @@ def build_synthetic_listing_xml(
             if not year:
                 year = cached.get('year', '')
 
+        # Get preview metadata for instant overlay application (skips TMDb queries)
+        metadata = target.get('metadata', {})
+
         # Build the item element based on type
         if target_type in ('movie', 'movies'):
             elem = ET.Element('Video', {
@@ -435,6 +516,12 @@ def build_synthetic_listing_xml(
                 elem.set('year', str(year))
             elem.set('thumb', f'/library/metadata/{rating_key}/thumb')
             elem.set('art', f'/library/metadata/{rating_key}/art')
+
+            # Add Media element with resolution/audio metadata for overlay matching
+            if metadata:
+                media_elem = _build_media_element(metadata)
+                elem.append(media_elem)
+
             items.append(elem)
 
         elif target_type in ('show', 'shows', 'series'):
@@ -448,6 +535,17 @@ def build_synthetic_listing_xml(
                 elem.set('year', str(year))
             elem.set('thumb', f'/library/metadata/{rating_key}/thumb')
             elem.set('art', f'/library/metadata/{rating_key}/art')
+
+            # Add status attribute for status overlay
+            if metadata and metadata.get('status'):
+                status_map = {
+                    'returning': 'Returning Series',
+                    'ended': 'Ended',
+                    'canceled': 'Canceled',
+                    'airing': 'Continuing',
+                }
+                elem.set('status', status_map.get(metadata['status'], metadata['status']))
+
             items.append(elem)
 
         elif target_type == 'season':
@@ -461,6 +559,12 @@ def build_synthetic_listing_xml(
             if parent_rating_key:
                 elem.set('parentRatingKey', str(parent_rating_key))
             elem.set('thumb', f'/library/metadata/{rating_key}/thumb')
+
+            # Add Media element for resolution metadata
+            if metadata:
+                media_elem = _build_media_element(metadata)
+                elem.append(media_elem)
+
             items.append(elem)
 
         elif target_type == 'episode':
@@ -477,6 +581,12 @@ def build_synthetic_listing_xml(
             if grandparent_rating_key:
                 elem.set('grandparentRatingKey', str(grandparent_rating_key))
             elem.set('thumb', f'/library/metadata/{rating_key}/thumb')
+
+            # Add Media element for resolution/audio metadata
+            if metadata:
+                media_elem = _build_media_element(metadata)
+                elem.append(media_elem)
+
             items.append(elem)
 
         else:

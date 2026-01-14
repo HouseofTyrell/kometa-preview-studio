@@ -146,6 +146,7 @@ function buildKometaConfig(
   // Add preview metadata section (used by the renderer)
   // IMPORTANT: ratingKey is required for deterministic output mapping
   // Parent ratingKeys are required for mock library mode to return synthetic children
+  // Metadata is used for instant overlay application without TMDb queries
   config.preview = {
     mode: 'write_blocked',
     targets: targets.map((t) => {
@@ -170,6 +171,10 @@ function buildKometaConfig(
       }
       if (t.parentIndex !== undefined) {
         target.parentIndex = t.parentIndex;
+      }
+      // Include hardcoded metadata for instant preview (skips TMDb queries)
+      if (t.metadata) {
+        target.metadata = t.metadata;
       }
       return target;
     }),

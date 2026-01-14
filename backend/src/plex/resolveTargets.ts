@@ -1,5 +1,33 @@
 import { PlexClient, PlexMediaItem } from './plexClient.js';
 
+/**
+ * Preview metadata for fast overlay rendering without TMDb queries
+ * These values are used for immediate preview, then optionally refined by real TMDb data
+ */
+export interface PreviewMetadata {
+  // Streaming services (for streaming overlay)
+  streaming?: string[];
+  // TV network (for network overlay)
+  network?: string;
+  // Studio (for studio overlay)
+  studio?: string;
+  // Resolution info (for resolution overlay)
+  resolution?: string;
+  // Audio codec (for audio_codec overlay)
+  audioCodec?: string;
+  // HDR info
+  hdr?: boolean;
+  dolbyVision?: boolean;
+  // Ratings (for ratings overlay)
+  imdbRating?: number;
+  tmdbRating?: number;
+  rtRating?: number;
+  // Status (for status overlay - shows only)
+  status?: 'returning' | 'ended' | 'canceled' | 'airing';
+  // Ribbon type (for ribbon overlay)
+  ribbon?: string;
+}
+
 export interface PreviewTarget {
   id: string;
   label: string;
@@ -8,6 +36,8 @@ export interface PreviewTarget {
   searchYear?: number;
   seasonIndex?: number;
   episodeIndex?: number;
+  // Hardcoded metadata for fast preview rendering
+  metadata?: PreviewMetadata;
 }
 
 export interface ResolvedTarget extends PreviewTarget {
@@ -25,6 +55,7 @@ export interface ResolvedTarget extends PreviewTarget {
 
 /**
  * Static preview targets for v0
+ * Metadata is hardcoded for instant preview rendering without TMDb queries
  */
 export const PREVIEW_TARGETS: PreviewTarget[] = [
   {
@@ -33,6 +64,18 @@ export const PREVIEW_TARGETS: PreviewTarget[] = [
     type: 'movie',
     searchTitle: 'The Matrix',
     searchYear: 1999,
+    metadata: {
+      streaming: ['max'],  // HBO Max
+      studio: 'Warner Bros. Pictures',
+      resolution: '4K',
+      audioCodec: 'DTS-HD MA',
+      hdr: true,
+      dolbyVision: true,
+      imdbRating: 8.7,
+      tmdbRating: 8.2,
+      rtRating: 83,
+      ribbon: 'imdb_top_250',
+    },
   },
   {
     id: 'dune',
@@ -40,12 +83,34 @@ export const PREVIEW_TARGETS: PreviewTarget[] = [
     type: 'movie',
     searchTitle: 'Dune',
     searchYear: 2021,
+    metadata: {
+      streaming: ['max', 'netflix'],
+      studio: 'Legendary Pictures',
+      resolution: '4K',
+      audioCodec: 'Dolby Atmos',
+      hdr: true,
+      dolbyVision: true,
+      imdbRating: 8.0,
+      tmdbRating: 7.8,
+      rtRating: 83,
+      ribbon: 'imdb_top_250',
+    },
   },
   {
     id: 'breakingbad_series',
     label: 'Breaking Bad — Series',
     type: 'show',
     searchTitle: 'Breaking Bad',
+    metadata: {
+      streaming: ['netflix', 'amc_plus'],
+      network: 'AMC',
+      studio: 'Sony Pictures Television',
+      imdbRating: 9.5,
+      tmdbRating: 8.9,
+      rtRating: 96,
+      status: 'ended',
+      ribbon: 'imdb_top_250',
+    },
   },
   {
     id: 'breakingbad_s01',
@@ -53,6 +118,12 @@ export const PREVIEW_TARGETS: PreviewTarget[] = [
     type: 'season',
     searchTitle: 'Breaking Bad',
     seasonIndex: 1,
+    metadata: {
+      streaming: ['netflix', 'amc_plus'],
+      network: 'AMC',
+      studio: 'Sony Pictures Television',
+      resolution: '1080p',
+    },
   },
   {
     id: 'breakingbad_s01e01',
@@ -61,6 +132,15 @@ export const PREVIEW_TARGETS: PreviewTarget[] = [
     searchTitle: 'Breaking Bad',
     seasonIndex: 1,
     episodeIndex: 1,
+    metadata: {
+      streaming: ['netflix', 'amc_plus'],
+      network: 'AMC',
+      studio: 'Sony Pictures Television',
+      resolution: '1080p',
+      audioCodec: 'AAC',
+      imdbRating: 9.0,
+      tmdbRating: 8.5,
+    },
   },
 ];
 
