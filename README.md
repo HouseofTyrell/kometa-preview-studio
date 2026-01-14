@@ -104,6 +104,8 @@ For Windows users, we provide convenient scripts that automate the entire setup 
 | `scripts\reset.bat` | Full reset: remove volumes, rebuild without cache |
 | `scripts\smoke-test.ps1` | Verify a preview job completed successfully |
 
+The **Config** page in the UI also includes System Controls for **Start**, **Stop**, and **Reset** that trigger these scripts on Windows hosts.
+
 **PowerShell alternative:**
 ```powershell
 # From the repository root
