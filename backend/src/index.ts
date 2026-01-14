@@ -6,6 +6,7 @@ import configRouter from './api/configUpload.js';
 import previewStartRouter from './api/previewStart.js';
 import previewStatusRouter from './api/previewStatus.js';
 import previewArtifactsRouter from './api/previewArtifacts.js';
+import systemControlRouter from './api/systemControl.js';
 import { ensureDir } from './util/safeFs.js';
 import { getJobsBasePath, getFontsPath } from './jobs/paths.js';
 
@@ -72,6 +73,7 @@ async function main() {
   app.use('/api/preview', previewStartRouter);
   app.use('/api/preview', previewStatusRouter);
   app.use('/api/preview', previewArtifactsRouter);
+  app.use('/api', systemControlRouter);
 
   // Error handling middleware
   app.use((err: Error, req: express.Request, res: express.Response, next: express.NextFunction) => {

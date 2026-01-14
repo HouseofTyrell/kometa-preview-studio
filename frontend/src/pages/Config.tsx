@@ -1,7 +1,7 @@
 import { useState } from 'react'
 import ConfigUploader from '../components/ConfigUploader'
 import OverlayEditor from '../components/OverlayEditor'
-import { ConfigAnalysis } from '../api/client'
+import { ConfigAnalysis, runSystemAction, SystemAction, SystemActionResult } from '../api/client'
 
 interface ConfigPageProps {
   currentConfig: string
@@ -16,6 +16,9 @@ interface ConfigPageProps {
 function ConfigPage({ currentConfig, onConfigUpdate }: ConfigPageProps) {
   const [analysis, setAnalysis] = useState<ConfigAnalysis | null>(null)
   const [configYaml, setConfigYaml] = useState(currentConfig)
+  const [systemAction, setSystemAction] = useState<SystemAction | null>(null)
+  const [systemResult, setSystemResult] = useState<SystemActionResult | null>(null)
+  const [systemError, setSystemError] = useState<string | null>(null)
 
   const handleConfigUploaded = (newAnalysis: ConfigAnalysis, yaml: string) => {
     setAnalysis(newAnalysis)
@@ -37,6 +40,20 @@ function ConfigPage({ currentConfig, onConfigUpdate }: ConfigPageProps) {
         analysis.libraryNames,
         analysis.overlayFiles
       )
+    }
+  }
+
+  const triggerSystemAction = async (action: SystemAction) => {
+    setSystemAction(action)
+    setSystemResult(null)
+    setSystemError(null)
+    try {
+      const result = await runSystemAction(action)
+      setSystemResult(result)
+    } catch (err) {
+      setSystemError(err instanceof Error ? err.message : 'Failed to run system action')
+    } finally {
+      setSystemAction(null)
     }
   }
 
@@ -125,6 +142,71 @@ function ConfigPage({ currentConfig, onConfigUpdate }: ConfigPageProps) {
         )}
       </div>
 
+      <div className="card">
+        <h2 className="card-title">System Controls</h2>
+        <p className="text-muted">
+          Trigger the same start/stop/reset scripts without leaving the UI. These actions are
+          available when running on a Windows host.
+        </p>
+
+        <div className="system-controls">
+          <button
+            className="btn btn-primary"
+            onClick={() => triggerSystemAction('start')}
+            disabled={systemAction !== null}
+          >
+            {systemAction === 'start' ? 'Starting…' : 'Start'}
+          </button>
+          <button
+            className="btn btn-secondary"
+            onClick={() => triggerSystemAction('stop')}
+            disabled={systemAction !== null}
+          >
+            {systemAction === 'stop' ? 'Stopping…' : 'Stop'}
+          </button>
+          <button
+            className="btn btn-secondary"
+            onClick={() => triggerSystemAction('reset')}
+            disabled={systemAction !== null}
+          >
+            {systemAction === 'reset' ? 'Resetting…' : 'Reset'}
+          </button>
+        </div>
+
+        {systemError && (
+          <div className="alert alert-error mt-2">
+            {systemError}
+          </div>
+        )}
+
+        {systemResult && (
+          <div className="system-result">
+            <div className="system-result-header">
+              <span className="system-result-title">
+                {systemResult.action.toUpperCase()} result
+              </span>
+              <span
+                className={`system-result-status ${
+                  systemResult.status === 'success' ? 'text-success' : 'text-error'
+                }`}
+              >
+                {systemResult.status}
+              </span>
+            </div>
+            <div className="system-result-meta">
+              <span>Exit code: {systemResult.exitCode ?? 'unknown'}</span>
+              <span>Started: {new Date(systemResult.startedAt).toLocaleString()}</span>
+            </div>
+            {(systemResult.stdout || systemResult.stderr) && (
+              <pre className="system-log">
+                {systemResult.stdout}
+                {systemResult.stderr && `\n${systemResult.stderr}`}
+              </pre>
+            )}
+          </div>
+        )}
+      </div>
+
       {analysis && (
         <OverlayEditor
           overlayYaml={analysis.overlayYaml}
@@ -153,6 +235,49 @@ function ConfigPage({ currentConfig, onConfigUpdate }: ConfigPageProps) {
           display: flex;
           flex-direction: column;
           gap: 0.5rem;
+        }
+
+        .system-controls {
+          display: flex;
+          flex-wrap: wrap;
+          gap: 0.75rem;
+          margin-top: 1rem;
+        }
+
+        .system-result {
+          margin-top: 1rem;
+          padding: 1rem;
+          border-radius: var(--radius-sm);
+          background-color: var(--bg-tertiary);
+          border: 1px solid var(--border-color);
+        }
+
+        .system-result-header {
+          display: flex;
+          justify-content: space-between;
+          align-items: center;
+          font-weight: 600;
+          margin-bottom: 0.5rem;
+        }
+
+        .system-result-meta {
+          display: flex;
+          flex-wrap: wrap;
+          gap: 1rem;
+          font-size: 0.85rem;
+          color: var(--text-secondary);
+          margin-bottom: 0.75rem;
+        }
+
+        .system-log {
+          white-space: pre-wrap;
+          background: var(--bg-primary);
+          border-radius: var(--radius-sm);
+          padding: 0.75rem;
+          max-height: 220px;
+          overflow-y: auto;
+          font-size: 0.75rem;
+          color: var(--text-secondary);
         }
       `}</style>
     </div>
