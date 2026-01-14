@@ -521,11 +521,72 @@ def extract_preview_targets(preview_config: Dict[str, Any]) -> List[Dict[str, An
     return preview_data.get('targets', [])
 
 
+def extract_library_names(preview_config: Dict[str, Any], targets: List[Dict[str, Any]]) -> Dict[str, str]:
+    """
+    Extract library names from preview config.
+
+    Maps section IDs to library names based on the config structure.
+    Section 1 = first movie library, Section 2 = first show library.
+
+    Args:
+        preview_config: Loaded preview.yml configuration
+        targets: List of preview targets to determine library types
+
+    Returns:
+        Dict mapping section_id ('1', '2') to library name
+    """
+    library_names = {}
+
+    # Check for library definitions in config
+    libraries = preview_config.get('libraries', {})
+    if not libraries:
+        # Try overlays section
+        libraries = preview_config.get('overlays', {})
+
+    if not libraries:
+        return library_names
+
+    # Determine target types (case-insensitive)
+    has_movies = any(str(t.get('type', '')).lower() in ('movie', 'movies') for t in targets)
+    has_shows = any(str(t.get('type', '')).lower() in ('show', 'shows', 'series', 'season', 'episode') for t in targets)
+
+    # Try to find movie and show library names from config
+    movie_lib_found = False
+    show_lib_found = False
+
+    for lib_name in libraries.keys():
+        # Skip if not a dict (might be None or other value)
+        if not isinstance(libraries[lib_name], dict):
+            continue
+
+        # Heuristic: library names often contain type hints
+        lib_lower = lib_name.lower()
+        if not movie_lib_found and (has_movies or 'movie' in lib_lower or 'film' in lib_lower):
+            library_names['1'] = lib_name
+            movie_lib_found = True
+        elif not show_lib_found and (has_shows or 'tv' in lib_lower or 'show' in lib_lower or 'series' in lib_lower):
+            library_names['2'] = lib_name
+            show_lib_found = True
+
+    # If only one library defined and we have targets of that type, use it for section 1
+    if not library_names and len(libraries) == 1:
+        lib_name = list(libraries.keys())[0]
+        if has_movies:
+            library_names['1'] = lib_name
+        elif has_shows:
+            library_names['2'] = lib_name
+        else:
+            # Default to section 1 if type unknown
+            library_names['1'] = lib_name
+
+    return library_names
+
+
 # ============================================================================
 # Mock Library Mode - Synthetic XML Generation
 # ============================================================================
 
-def build_synthetic_section_detail_xml(section_id: str, targets: List[Dict[str, Any]]) -> bytes:
+def build_synthetic_section_detail_xml(section_id: str, targets: List[Dict[str, Any]], library_names: Optional[Dict[str, str]] = None) -> bytes:
     """
     Build synthetic /library/sections/{id} XML response for a specific section.
 
@@ -535,35 +596,36 @@ def build_synthetic_section_detail_xml(section_id: str, targets: List[Dict[str, 
     Args:
         section_id: The requested section ID
         targets: List of preview targets to determine the library type
+        library_names: Optional dict mapping section_id to library name
 
     Returns:
         XML bytes for MediaContainer with the section's Directory element
     """
-    # Determine section type based on targets
-    has_movies = any(t.get('type') in ('movie', 'movies') for t in targets)
-    has_shows = any(t.get('type') in ('show', 'shows', 'series', 'season', 'episode') for t in targets)
+    # Determine section type based on targets (case-insensitive)
+    has_movies = any(str(t.get('type', '')).lower() in ('movie', 'movies') for t in targets)
+    has_shows = any(str(t.get('type', '')).lower() in ('show', 'shows', 'series', 'season', 'episode') for t in targets)
 
     # Section 1 is Movies, Section 2 is TV Shows (our convention)
     if section_id == '1' or (has_movies and not has_shows):
         section_type = 'movie'
-        section_title = 'Movies'
+        section_title = library_names.get('1', 'Movies') if library_names else 'Movies'
         agent = 'tv.plex.agents.movie'
         scanner = 'Plex Movie'
     elif section_id == '2' or (has_shows and not has_movies):
         section_type = 'show'
-        section_title = 'TV Shows'
+        section_title = library_names.get('2', 'TV Shows') if library_names else 'TV Shows'
         agent = 'tv.plex.agents.series'
         scanner = 'Plex TV Series'
     else:
         # Default to movie for section 1, show for other sections
         if section_id == '1':
             section_type = 'movie'
-            section_title = 'Movies'
+            section_title = library_names.get('1', 'Movies') if library_names else 'Movies'
             agent = 'tv.plex.agents.movie'
             scanner = 'Plex Movie'
         else:
             section_type = 'show'
-            section_title = 'TV Shows'
+            section_title = library_names.get('2', 'TV Shows') if library_names else 'TV Shows'
             agent = 'tv.plex.agents.series'
             scanner = 'Plex TV Series'
 
@@ -601,7 +663,7 @@ def build_synthetic_section_detail_xml(section_id: str, targets: List[Dict[str, 
     return ET.tostring(root, encoding='unicode').encode('utf-8')
 
 
-def build_synthetic_library_sections_xml(targets: List[Dict[str, Any]]) -> bytes:
+def build_synthetic_library_sections_xml(targets: List[Dict[str, Any]], library_names: Optional[Dict[str, str]] = None) -> bytes:
     """
     Build synthetic /library/sections XML response.
 
@@ -609,21 +671,26 @@ def build_synthetic_library_sections_xml(targets: List[Dict[str, Any]]) -> bytes
 
     Args:
         targets: List of preview targets
+        library_names: Optional dict mapping section_id to library name
 
     Returns:
         XML bytes for MediaContainer with Directory elements for sections
     """
-    # Determine which section types we need based on targets
-    has_movies = any(t.get('type') in ('movie', 'movies') for t in targets)
-    has_shows = any(t.get('type') in ('show', 'shows', 'series', 'season', 'episode') for t in targets)
+    # Determine which section types we need based on targets (case-insensitive)
+    has_movies = any(str(t.get('type', '')).lower() in ('movie', 'movies') for t in targets)
+    has_shows = any(str(t.get('type', '')).lower() in ('show', 'shows', 'series', 'season', 'episode') for t in targets)
 
     sections = []
+
+    # Get library names from config or use defaults
+    movie_lib_name = library_names.get('1', 'Movies') if library_names else 'Movies'
+    show_lib_name = library_names.get('2', 'TV Shows') if library_names else 'TV Shows'
 
     if has_movies:
         sections.append({
             'key': '1',
             'type': 'movie',
-            'title': 'Movies',
+            'title': movie_lib_name,
             'agent': 'tv.plex.agents.movie',
             'scanner': 'Plex Movie',
         })
@@ -632,7 +699,7 @@ def build_synthetic_library_sections_xml(targets: List[Dict[str, Any]]) -> bytes
         sections.append({
             'key': '2',
             'type': 'show',
-            'title': 'TV Shows',
+            'title': show_lib_name,
             'agent': 'tv.plex.agents.series',
             'scanner': 'Plex TV Series',
         })
@@ -640,8 +707,8 @@ def build_synthetic_library_sections_xml(targets: List[Dict[str, Any]]) -> bytes
     # If no types detected, create both sections as fallback
     if not sections:
         sections = [
-            {'key': '1', 'type': 'movie', 'title': 'Movies', 'agent': 'tv.plex.agents.movie', 'scanner': 'Plex Movie'},
-            {'key': '2', 'type': 'show', 'title': 'TV Shows', 'agent': 'tv.plex.agents.series', 'scanner': 'Plex TV Series'},
+            {'key': '1', 'type': 'movie', 'title': movie_lib_name, 'agent': 'tv.plex.agents.movie', 'scanner': 'Plex Movie'},
+            {'key': '2', 'type': 'show', 'title': show_lib_name, 'agent': 'tv.plex.agents.series', 'scanner': 'Plex TV Series'},
         ]
 
     root = ET.Element('MediaContainer', {
@@ -1092,6 +1159,7 @@ class PlexProxyHandler(BaseHTTPRequestHandler):
     # Mock library mode configuration
     mock_mode_enabled: bool = False
     preview_targets: List[Dict[str, Any]] = []
+    library_names: Dict[str, str] = {}  # Maps section ID to library name
 
     # Metadata cache for learning parent relationships
     # Key: ratingKey, Value: dict of attributes from metadata response
@@ -1407,7 +1475,7 @@ class PlexProxyHandler(BaseHTTPRequestHandler):
 
     def _handle_mock_sections(self):
         """Handle /library/sections in mock mode - return synthetic sections."""
-        xml_bytes = build_synthetic_library_sections_xml(self.preview_targets)
+        xml_bytes = build_synthetic_library_sections_xml(self.preview_targets, self.library_names)
 
         # Debug logging
         if DEBUG_MOCK_XML:
@@ -1440,7 +1508,7 @@ class PlexProxyHandler(BaseHTTPRequestHandler):
         instead of whatever library is at that ID on the real Plex server.
         Fixes "Unknown libtype 'movie' ... Available libtypes: ['collection']" error.
         """
-        xml_bytes = build_synthetic_section_detail_xml(section_id, self.preview_targets)
+        xml_bytes = build_synthetic_section_detail_xml(section_id, self.preview_targets, self.library_names)
 
         # Debug logging
         if DEBUG_MOCK_XML:
@@ -2540,13 +2608,15 @@ class PlexProxy:
         plex_token: str,
         job_path: Path,
         allowed_rating_keys: Optional[Set[str]] = None,
-        preview_targets: Optional[List[Dict[str, Any]]] = None
+        preview_targets: Optional[List[Dict[str, Any]]] = None,
+        library_names: Optional[Dict[str, str]] = None
     ):
         self.real_plex_url = real_plex_url.rstrip('/')
         self.plex_token = plex_token
         self.job_path = job_path
         self.allowed_rating_keys = allowed_rating_keys or set()
         self.preview_targets = preview_targets or []
+        self.library_names = library_names or {}
 
         # Parse the real Plex URL
         parsed = urlparse(real_plex_url)
@@ -2584,6 +2654,7 @@ class PlexProxy:
         # Configure mock mode
         PlexProxyHandler.mock_mode_enabled = self._mock_mode_enabled
         PlexProxyHandler.preview_targets = self.preview_targets
+        PlexProxyHandler.library_names = self.library_names
         PlexProxyHandler.metadata_cache = {}
         PlexProxyHandler.parent_rating_keys = set()
         PlexProxyHandler.forward_request_count = 0
@@ -3114,11 +3185,19 @@ def main():
     else:
         logger.info(f"Proxy will only expose {len(allowed_rating_keys)} items to Kometa")
 
+    # Extract library names to match mock sections with Kometa config
+    library_names = extract_library_names(preview_config, targets)
+    if library_names:
+        logger.info(f"Library name mapping: {library_names}")
+    else:
+        logger.info("Using default library names (Movies, TV Shows)")
+
     # Start the write-blocking proxy with capture, filtering, and mock mode
     proxy = PlexProxy(
         real_plex_url, plex_token, job_path,
         allowed_rating_keys=allowed_rating_keys,
-        preview_targets=targets
+        preview_targets=targets,
+        library_names=library_names
     )
 
     # Start TMDb proxy for fast mode (caps external ID expansions)
