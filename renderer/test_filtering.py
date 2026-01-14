@@ -11,8 +11,10 @@ Run with:
     python3 test_filtering.py
 """
 
+import tempfile
 import unittest
 import xml.etree.ElementTree as ET
+from pathlib import Path
 
 # Import the filtering functions from preview_entrypoint
 from preview_entrypoint import (
@@ -36,6 +38,7 @@ from preview_entrypoint import (
     extract_image_from_body,
     sanitize_overlay_data_for_fast_mode,
     TMDbProxyHandler,
+    generate_proxy_config,
 )
 
 
@@ -204,6 +207,58 @@ class TestCreateEmptyMediaContainer(unittest.TestCase):
         self.assertEqual(root.tag, 'MediaContainer')
         self.assertEqual(root.get('size'), '0')
         self.assertEqual(len(list(root)), 0)
+
+
+class TestMockLibraryTypes(unittest.TestCase):
+    """Tests for synthetic library section types."""
+
+    def test_movie_section_type_is_movie(self):
+        targets = [
+            {'id': 'movie-1', 'type': 'movie', 'ratingKey': '100', 'title': 'Example Movie'}
+        ]
+        sections_xml = build_synthetic_library_sections_xml(targets)
+        sections_root = ET.fromstring(sections_xml)
+        sections = sections_root.findall('Directory')
+        self.assertTrue(sections)
+        self.assertEqual(sections[0].get('type'), 'movie')
+
+        detail_xml = build_synthetic_section_detail_xml('1', targets)
+        detail_root = ET.fromstring(detail_xml)
+        directory = detail_root.find('Directory')
+        self.assertIsNotNone(directory)
+        self.assertEqual(directory.get('type'), 'movie')
+
+
+class TestKometaConfigGeneration(unittest.TestCase):
+    """Tests for kometa_run.yml generation."""
+
+    def test_kometa_run_yaml_has_no_mid_doc_end_markers(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            job_path = Path(tmpdir)
+            (job_path / 'config').mkdir(parents=True, exist_ok=True)
+            preview_config = {
+                'plex': {'url': 'http://plex.example', 'token': 'token'},
+                'tmdb': {'apikey': 'tmdb'},
+                'libraries': {
+                    'Movies': {
+                        'overlay_files': ['overlays.yml']
+                    }
+                }
+            }
+
+            config_path = generate_proxy_config(
+                job_path,
+                preview_config,
+                'http://127.0.0.1:32500'
+            )
+
+            text = config_path.read_text()
+            lines = text.splitlines()
+            last_non_empty = max((i for i, line in enumerate(lines) if line.strip()), default=-1)
+
+            for idx, line in enumerate(lines):
+                if line.strip() == '...' and idx != last_non_empty:
+                    self.fail("Found mid-document YAML end marker '...' in kometa_run.yml")
 
 
 class TestIsListingEndpoint(unittest.TestCase):

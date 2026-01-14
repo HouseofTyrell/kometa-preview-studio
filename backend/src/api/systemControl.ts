@@ -1,5 +1,6 @@
 import express from 'express';
 import { spawn } from 'child_process';
+import { fileURLToPath } from 'url';
 import * as path from 'path';
 import * as fs from 'fs/promises';
 
@@ -23,7 +24,10 @@ const actionScripts: Record<SystemAction, string> = {
   reset: 'reset.ps1',
 };
 
-const scriptsDir = path.resolve(__dirname, '../../../scripts');
+const scriptsDir = path.resolve(
+  path.dirname(fileURLToPath(import.meta.url)),
+  '../../../scripts'
+);
 
 const repoRoot = path.resolve(scriptsDir, '..');
 

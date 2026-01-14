@@ -85,14 +85,20 @@ TMDB_PROXY_PORT = 8191  # Port for TMDb proxy
 # Default: false (log warnings but continue)
 PREVIEW_STRICT_FONTS = os.environ.get('PREVIEW_STRICT_FONTS', '0') == '1'
 
-# Default fallback font path
-DEFAULT_FALLBACK_FONT = os.environ.get('PREVIEW_FALLBACK_FONT', '/config/fonts/Inter-Regular.ttf')
+# Default fallback font path (prefer /fonts if available)
+DEFAULT_FALLBACK_FONT = os.environ.get('PREVIEW_FALLBACK_FONT', '/fonts/Inter-Regular.ttf')
 
 # Common font paths to validate
 COMMON_FONT_PATHS = [
     '/config/fonts',
     '/fonts',
     '/usr/share/fonts',
+]
+
+FALLBACK_FONT_CANDIDATES = [
+    DEFAULT_FALLBACK_FONT,
+    '/fonts/Inter-Regular.ttf',
+    '/config/fonts/Inter-Regular.ttf',
 ]
 
 # FAST mode guardrails
@@ -131,18 +137,32 @@ def validate_fonts_at_startup() -> List[str]:
         logger.warning("  Overlay rendering may fail if custom fonts are referenced.")
         logger.warning("  To fix: Mount font files to /config/fonts or set PREVIEW_FALLBACK_FONT")
 
-    # Check fallback font
-    if Path(DEFAULT_FALLBACK_FONT).exists():
-        logger.info(f"FALLBACK_FONT_OK: {DEFAULT_FALLBACK_FONT}")
+    fallback_font = get_fallback_font_path()
+    if Path(fallback_font).exists():
+        logger.info(f"FALLBACK_FONT_OK: {fallback_font}")
     else:
-        logger.warning(f"FALLBACK_FONT_MISSING: {DEFAULT_FALLBACK_FONT}")
+        logger.warning(f"FALLBACK_FONT_MISSING: {fallback_font}")
         if PREVIEW_STRICT_FONTS:
             raise FileNotFoundError(
-                f"Fallback font not found: {DEFAULT_FALLBACK_FONT}. "
+                f"Fallback font not found: {fallback_font}. "
                 f"Set PREVIEW_STRICT_FONTS=0 to continue without fallback font."
             )
 
     return available_dirs
+
+
+def normalize_font_path(requested_path: str) -> Path:
+    requested = Path(requested_path)
+    if requested.is_absolute():
+        return requested
+    return Path('/') / requested
+
+
+def get_fallback_font_path() -> str:
+    for candidate in FALLBACK_FONT_CANDIDATES:
+        if candidate and Path(candidate).exists():
+            return candidate
+    return DEFAULT_FALLBACK_FONT
 
 
 def resolve_font_fallback(requested_path: str) -> Optional[str]:
@@ -151,13 +171,22 @@ def resolve_font_fallback(requested_path: str) -> Optional[str]:
 
     Returns the resolved font path if available, or None if missing and strict mode is disabled.
     """
-    requested = Path(requested_path)
+    requested = normalize_font_path(requested_path)
     if requested.exists():
-        return requested_path
+        return str(requested)
 
-    fallback = Path(DEFAULT_FALLBACK_FONT)
-    if not fallback.exists():
-        message = f"Fallback font missing: {DEFAULT_FALLBACK_FONT}"
+    fallback_source: Optional[Path] = None
+    for root in ('/fonts', '/config/fonts'):
+        candidate = Path(root) / requested.name
+        if candidate.exists():
+            fallback_source = candidate
+            break
+
+    if fallback_source is None:
+        fallback_source = Path(get_fallback_font_path())
+
+    if not fallback_source.exists():
+        message = f"Fallback font missing: {fallback_source}"
         if PREVIEW_STRICT_FONTS:
             raise FileNotFoundError(message)
         logger.warning(f"FONT_FALLBACK_SKIPPED requested={requested_path} reason=fallback_missing")
@@ -166,9 +195,9 @@ def resolve_font_fallback(requested_path: str) -> Optional[str]:
     requested.parent.mkdir(parents=True, exist_ok=True)
     try:
         if requested.exists():
-            return requested_path
-        shutil.copy2(fallback, requested)
-        logger.info(f"FONT_FALLBACK requested={requested_path} fallback={DEFAULT_FALLBACK_FONT}")
+            return str(requested)
+        shutil.copy2(fallback_source, requested)
+        logger.info(f"FONT_FALLBACK requested={requested_path} fallback={fallback_source}")
         return str(requested)
     except Exception as e:
         if PREVIEW_STRICT_FONTS:
@@ -1556,6 +1585,10 @@ class PlexProxyHandler(BaseHTTPRequestHandler):
             with self.data_lock:
                 self.forward_request_count += 1
 
+            logger.info(
+                f"FORWARDED method={method} path={path.split('?')[0]} status={response.status}"
+            )
+
             # Cache metadata response for parent relationship learning
             if should_cache_metadata and response.status == 200 and rating_key:
                 self._cache_metadata_response(rating_key, response_body)
@@ -2873,15 +2906,7 @@ def load_preview_config(job_path: Path) -> Dict[str, Any]:
     if not config_path.exists():
         raise FileNotFoundError(f"Preview config not found: {config_path}")
 
-    try:
-        import yaml
-        with open(config_path, 'r') as f:
-            return yaml.safe_load(f) or {}
-    except ImportError:
-        from ruamel.yaml import YAML
-        yaml_parser = YAML()
-        with open(config_path, 'r') as f:
-            return dict(yaml_parser.load(f) or {})
+    return load_yaml_file(config_path)
 
 
 def _resolve_overlay_path(job_path: Path, raw_path: str) -> Path:
@@ -2934,6 +2959,52 @@ def _read_yaml(path: Path) -> Dict[str, Any]:
     yaml_parser = YAML()
     with path.open('r') as f:
         return dict(yaml_parser.load(f) or {})
+
+
+def sanitize_yaml_text(text: str) -> str:
+    lines = text.splitlines()
+    last_non_empty = -1
+    for idx in range(len(lines) - 1, -1, -1):
+        if lines[idx].strip():
+            last_non_empty = idx
+            break
+
+    sanitized_lines = []
+    for idx, line in enumerate(lines):
+        if line.strip() == '...' and idx != last_non_empty:
+            continue
+        sanitized_lines.append(line)
+
+    sanitized = '\n'.join(sanitized_lines)
+    if text.endswith('\n'):
+        sanitized += '\n'
+    return sanitized
+
+
+def redact_yaml_snippet(lines: List[str]) -> List[str]:
+    redacted = []
+    for line in lines:
+        scrubbed = re.sub(r'(\btoken:\s*)(\S+)', r'\1[REDACTED]', line)
+        scrubbed = re.sub(r'(\bapikey:\s*)(\S+)', r'\1[REDACTED]', scrubbed)
+        scrubbed = re.sub(r'(\bclient_id:\s*)(\S+)', r'\1[REDACTED]', scrubbed)
+        scrubbed = re.sub(r'(\bclient_secret:\s*)(\S+)', r'\1[REDACTED]', scrubbed)
+        redacted.append(scrubbed)
+    return redacted
+
+
+def load_yaml_file(path: Path) -> Dict[str, Any]:
+    try:
+        import yaml
+        with path.open('r') as f:
+            return yaml.safe_load(f) or {}
+    except ImportError:
+        try:
+            from ruamel.yaml import YAML
+            yaml_parser = YAML()
+            with path.open('r') as f:
+                return dict(yaml_parser.load(f) or {})
+        except ImportError:
+            return json.loads(path.read_text() or '{}')
 
 
 def apply_fast_mode_sanitization(job_path: Path, preview_config: Dict[str, Any]) -> Dict[str, Any]:
@@ -3069,14 +3140,20 @@ def generate_proxy_config(job_path: Path, preview_config: Dict[str, Any], proxy_
     Generate a Kometa config that points to the proxy instead of real Plex.
     """
     # Determine which YAML library to use
-    use_pyyaml = False
+    yaml_backend = None
+    pyyaml = None
     try:
-        import yaml as pyyaml
-        use_pyyaml = True
+        import yaml as pyyaml  # type: ignore
+        yaml_backend = 'pyyaml'
     except ImportError:
-        pass
+        try:
+            from ruamel.yaml import YAML
+            yaml_backend = 'ruamel'
+        except ImportError:
+            yaml_backend = None
 
     config_dir = job_path / 'config'
+    config_dir.mkdir(parents=True, exist_ok=True)
     kometa_config_path = config_dir / 'kometa_run.yml'
 
     kometa_config = {}
@@ -3141,14 +3218,25 @@ def generate_proxy_config(job_path: Path, preview_config: Dict[str, Any], proxy_
             kometa_config['libraries'] = libraries
 
     with open(kometa_config_path, 'w') as f:
-        if use_pyyaml:
+        if yaml_backend == 'pyyaml' and pyyaml:
             pyyaml.dump(kometa_config, f, default_flow_style=False)
-        else:
-            # Use ruamel.yaml (available in Kometa image)
+        elif yaml_backend == 'ruamel':
             from ruamel.yaml import YAML
             ruamel_yaml = YAML()
             ruamel_yaml.default_flow_style = False
             ruamel_yaml.dump(kometa_config, f)
+        else:
+            json.dump(kometa_config, f, indent=2)
+
+    sanitized_text = sanitize_yaml_text(kometa_config_path.read_text())
+    kometa_config_path.write_text(sanitized_text)
+
+    parsed_config = load_yaml_file(kometa_config_path)
+    missing_keys = [key for key in ('plex', 'tmdb', 'libraries') if key not in parsed_config]
+    if missing_keys:
+        raise RuntimeError(
+            f"Generated Kometa config missing required keys: {', '.join(missing_keys)}"
+        )
 
     logger.info(f"Generated Kometa config: {kometa_config_path}")
     logger.info(f"  Plex URL set to proxy: {proxy_url}")
@@ -3642,6 +3730,7 @@ def main():
         logger.info("=" * 60)
 
         tmdb_proxy_url = tmdb_proxy.proxy_url if tmdb_proxy else None
+        logger.info(f"Launching Kometa with config={kometa_config_path} plex_url={proxy.proxy_url}")
         exit_code = run_kometa(kometa_config_path, tmdb_proxy_url=tmdb_proxy_url)
 
         logger.info("=" * 60)
@@ -3666,16 +3755,31 @@ def main():
         logger.info(f"Blocked {len(blocked_requests)} write attempts")
         logger.info(f"Captured {len(captured_uploads)} uploads")
 
+        sections_all_count = sum(
+            1 for req in request_log
+            if req.get('method') == 'GET' and re.match(r'^/library/sections/\d+/all$', req.get('path_base', ''))
+        )
+
         # Traffic sanity check: ensure proxy is in the request path
-        if sections_get_count == 0 or metadata_get_count == 0:
+        if sections_get_count == 0 and metadata_get_count == 0 and sections_all_count == 0:
             logger.error("PROXY_TRAFFIC_SANITY_FAILED: missing expected Plex GET traffic")
             logger.error(f"  /library/sections GETs: {sections_get_count}")
             logger.error(f"  /library/metadata/* GETs: {metadata_get_count}")
+            logger.error(f"  /library/sections/<id>/all GETs: {sections_all_count}")
             if request_log:
                 logger.error("  Last 30 requests:")
                 for req in request_log[-30:]:
                     logger.error(f"    {req.get('method')} {req.get('path_base')}")
-            raise RuntimeError("Proxy did not observe expected Plex traffic; verify Kometa uses proxy URL.")
+            if kometa_config_path and kometa_config_path.exists():
+                snippet_lines = kometa_config_path.read_text().splitlines()[:20]
+                snippet_lines = redact_yaml_snippet(snippet_lines)
+                logger.error("Kometa config snippet (first 20 lines, redacted):")
+                for line in snippet_lines:
+                    logger.error(f"  {line}")
+            raise RuntimeError(
+                "Kometa did not process libraries — likely invalid config "
+                "(missing libraries) or YAML truncated (unexpected '...')."
+            )
 
         # Log mock mode vs filter mode statistics
         if proxy.mock_mode_enabled:

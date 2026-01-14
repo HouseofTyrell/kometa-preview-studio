@@ -63,7 +63,28 @@ export function parseYaml(text: string): ParsedConfig {
  * Stringify object to YAML
  */
 export function stringifyYaml(obj: unknown): string {
-  return yaml.stringify(obj, { indent: 2 });
+  const raw = yaml.stringify(obj, { indent: 2 });
+  return stripYamlDocEndMarkers(raw);
+}
+
+function stripYamlDocEndMarkers(text: string): string {
+  const lines = text.split(/\r?\n/);
+  let lastNonEmpty = -1;
+  for (let i = lines.length - 1; i >= 0; i -= 1) {
+    if (lines[i].trim() !== '') {
+      lastNonEmpty = i;
+      break;
+    }
+  }
+
+  const filtered = lines.filter((line, index) => {
+    if (line.trim() !== '...') {
+      return true;
+    }
+    return index === lastNonEmpty;
+  });
+
+  return filtered.join('\n');
 }
 
 /**
