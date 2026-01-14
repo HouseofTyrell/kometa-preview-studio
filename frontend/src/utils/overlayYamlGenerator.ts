@@ -2,7 +2,7 @@
  * Generates Kometa overlay YAML from overlay configurations
  */
 
-import { OverlayConfig } from '../types/overlayConfig'
+import { OverlayConfig, QueueConfig } from '../types/overlayConfig'
 
 interface GeneratedOverlayYaml {
   overlays: Record<string, OverlayDefinition>
@@ -190,7 +190,10 @@ function toYamlString(obj: Record<string, unknown>, indent = 0): string {
 /**
  * Generate YAML string from overlay configurations
  */
-export function generateOverlayYaml(overlays: OverlayConfig[]): string {
+export function generateOverlayYaml(
+  overlays: OverlayConfig[],
+  queueConfigs?: QueueConfig[]
+): string {
   // Filter to only enabled overlays
   const enabledOverlays = overlays.filter((o) => o.enabled)
 
@@ -203,26 +206,38 @@ export function generateOverlayYaml(overlays: OverlayConfig[]): string {
     overlays: {},
   }
 
-  // Collect unique queues
+  // Build queue definitions from explicit configs
   const queues = new Map<string, QueueDefinition>()
+
+  // Add explicit queue configs if provided
+  if (queueConfigs && queueConfigs.length > 0) {
+    for (const queueConfig of queueConfigs) {
+      queues.set(queueConfig.name, {
+        horizontal_align: queueConfig.position.horizontalAlign,
+        vertical_align: queueConfig.position.verticalAlign,
+        horizontal_offset: queueConfig.horizontalOffset,
+        vertical_offset: queueConfig.verticalOffset,
+        horizontal_spacing: queueConfig.direction === 'horizontal' ? queueConfig.spacing : undefined,
+        vertical_spacing: queueConfig.direction === 'vertical' ? queueConfig.spacing : undefined,
+      })
+    }
+  }
 
   for (const config of enabledOverlays) {
     // Use a sanitized name as the key
     const key = config.name.replace(/[^a-zA-Z0-9_]/g, '_')
     yamlObj.overlays[key] = generateOverlayDefinition(config)
 
-    // Track queues
-    if (config.grouping.queue) {
-      if (!queues.has(config.grouping.queue)) {
-        queues.set(config.grouping.queue, {
-          horizontal_align: config.position.horizontalAlign,
-          vertical_align: config.position.verticalAlign,
-          horizontal_offset: config.position.horizontalOffset,
-          vertical_offset: config.position.verticalOffset,
-          horizontal_spacing: 10,
-          vertical_spacing: 10,
-        })
-      }
+    // Fallback: infer queue from overlay if no explicit config provided
+    if (config.grouping.queue && !queues.has(config.grouping.queue)) {
+      queues.set(config.grouping.queue, {
+        horizontal_align: config.position.horizontalAlign,
+        vertical_align: config.position.verticalAlign,
+        horizontal_offset: config.position.horizontalOffset,
+        vertical_offset: config.position.verticalOffset,
+        horizontal_spacing: 10,
+        vertical_spacing: 10,
+      })
     }
   }
 

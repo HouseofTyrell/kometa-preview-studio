@@ -114,6 +114,20 @@ export interface OverlayGrouping {
   suppressOverlays?: string[];
 }
 
+// Queue direction type
+export type QueueDirection = 'horizontal' | 'vertical';
+
+// Queue configuration for managing multiple overlays in sequence
+export interface QueueConfig {
+  id: string;
+  name: string;
+  position: Pick<OverlayPosition, 'horizontalAlign' | 'verticalAlign'>;
+  horizontalOffset: number;
+  verticalOffset: number;
+  direction: QueueDirection;
+  spacing: number;          // Spacing between items in pixels
+}
+
 // Main overlay configuration
 export interface OverlayConfig {
   id: string;
@@ -129,6 +143,9 @@ export interface OverlayConfig {
 
   // For custom file/url overlays
   sourcePath?: string;
+
+  // Preview URL for custom images (browser-accessible)
+  previewUrl?: string;
 
   // For blur overlays
   blurAmount?: number;
@@ -358,3 +375,63 @@ export function createTextOverlayConfig(text: string): OverlayConfig {
 export function getPositionPresetKey(position: OverlayPosition): string {
   return `${position.verticalAlign}-${position.horizontalAlign}`;
 }
+
+// Create a new queue config
+export function createQueueConfig(name: string): QueueConfig {
+  return {
+    id: `queue-${Date.now()}`,
+    name,
+    position: { horizontalAlign: 'left', verticalAlign: 'bottom' },
+    horizontalOffset: 15,
+    verticalOffset: 15,
+    direction: 'horizontal',
+    spacing: 10,
+  };
+}
+
+// Create a custom file overlay config
+export function createFileOverlayConfig(
+  name: string,
+  filePath: string,
+  previewUrl?: string
+): OverlayConfig {
+  return {
+    id: `file-${Date.now()}`,
+    name: name.replace(/[^a-zA-Z0-9_]/g, '_'),
+    displayName: name,
+    enabled: true,
+    sourceType: 'file',
+    sourcePath: filePath,
+    previewUrl,
+    position: DEFAULT_POSITION,
+    backdrop: DEFAULT_BACKDROP,
+    grouping: DEFAULT_GROUPING,
+  };
+}
+
+// Create a URL-based overlay config
+export function createUrlOverlayConfig(
+  name: string,
+  url: string
+): OverlayConfig {
+  return {
+    id: `url-${Date.now()}`,
+    name: name.replace(/[^a-zA-Z0-9_]/g, '_'),
+    displayName: name,
+    enabled: true,
+    sourceType: 'url',
+    sourcePath: url,
+    position: DEFAULT_POSITION,
+    backdrop: DEFAULT_BACKDROP,
+    grouping: DEFAULT_GROUPING,
+  };
+}
+
+// Default queue config
+export const DEFAULT_QUEUE_CONFIG: Omit<QueueConfig, 'id' | 'name'> = {
+  position: { horizontalAlign: 'left', verticalAlign: 'bottom' },
+  horizontalOffset: 15,
+  verticalOffset: 15,
+  direction: 'horizontal',
+  spacing: 10,
+};

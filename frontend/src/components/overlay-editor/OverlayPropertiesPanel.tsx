@@ -5,6 +5,8 @@ import { OverlayConfig, OverlayPosition, OverlayBackdrop, OverlayText } from '..
 
 interface OverlayPropertiesPanelProps {
   overlay: OverlayConfig | null
+  overlays?: OverlayConfig[]  // All overlays for suppress selector
+  availableQueues?: string[]  // Available queue names
   onChange: (overlay: OverlayConfig) => void
   onDelete: (id: string) => void
   disabled?: boolean
@@ -12,11 +14,14 @@ interface OverlayPropertiesPanelProps {
 
 function OverlayPropertiesPanel({
   overlay,
+  overlays = [],
+  availableQueues = [],
   onChange,
   onDelete,
   disabled = false,
 }: OverlayPropertiesPanelProps) {
   const [showAdvanced, setShowAdvanced] = useState(false)
+  const [showSuppressSelector, setShowSuppressSelector] = useState(false)
 
   const handlePositionChange = useCallback(
     (position: OverlayPosition) => {
@@ -38,7 +43,7 @@ function OverlayPropertiesPanel({
   )
 
   const handleGroupingChange = useCallback(
-    (field: string, value: string | number) => {
+    (field: string, value: string | number | string[]) => {
       if (!overlay) return
       onChange({
         ...overlay,
@@ -47,6 +52,22 @@ function OverlayPropertiesPanel({
     },
     [overlay, onChange]
   )
+
+  // Toggle suppress overlay
+  const handleToggleSuppressOverlay = useCallback(
+    (overlayName: string) => {
+      if (!overlay) return
+      const currentSuppressed = overlay.grouping.suppressOverlays || []
+      const newSuppressed = currentSuppressed.includes(overlayName)
+        ? currentSuppressed.filter((n) => n !== overlayName)
+        : [...currentSuppressed, overlayName]
+      handleGroupingChange('suppressOverlays', newSuppressed)
+    },
+    [overlay, handleGroupingChange]
+  )
+
+  // Get other overlays for suppress selector (exclude current overlay)
+  const otherOverlays = overlays.filter((o) => o.id !== overlay?.id)
 
   const handleTextChange = useCallback(
     (text: OverlayText) => {
@@ -300,14 +321,66 @@ function OverlayPropertiesPanel({
 
               <div className="control-row">
                 <label className="control-label">Queue:</label>
-                <input
-                  type="text"
-                  value={overlay.grouping.queue || ''}
-                  onChange={(e) => handleGroupingChange('queue', e.target.value)}
+                {availableQueues.length > 0 ? (
+                  <select
+                    value={overlay.grouping.queue || ''}
+                    onChange={(e) => handleGroupingChange('queue', e.target.value || undefined)}
+                    disabled={disabled}
+                    className="queue-select"
+                  >
+                    <option value="">None</option>
+                    {availableQueues.map((q) => (
+                      <option key={q} value={q}>{q}</option>
+                    ))}
+                  </select>
+                ) : (
+                  <input
+                    type="text"
+                    value={overlay.grouping.queue || ''}
+                    onChange={(e) => handleGroupingChange('queue', e.target.value)}
+                    disabled={disabled}
+                    className="text-input"
+                    placeholder="e.g., bottom"
+                  />
+                )}
+              </div>
+
+              {/* Suppress Overlays Selector */}
+              <div className="suppress-section">
+                <button
+                  type="button"
+                  className="suppress-toggle"
+                  onClick={() => setShowSuppressSelector(!showSuppressSelector)}
                   disabled={disabled}
-                  className="text-input"
-                  placeholder="e.g., bottom"
-                />
+                >
+                  <span>{showSuppressSelector ? '▼' : '▶'}</span>
+                  <span>Suppress Overlays</span>
+                  {(overlay.grouping.suppressOverlays?.length || 0) > 0 && (
+                    <span className="suppress-count">
+                      {overlay.grouping.suppressOverlays?.length}
+                    </span>
+                  )}
+                </button>
+
+                {showSuppressSelector && (
+                  <div className="suppress-list">
+                    {otherOverlays.length === 0 ? (
+                      <div className="suppress-empty">No other overlays to suppress</div>
+                    ) : (
+                      otherOverlays.map((other) => (
+                        <label key={other.id} className="suppress-item">
+                          <input
+                            type="checkbox"
+                            checked={overlay.grouping.suppressOverlays?.includes(other.name) || false}
+                            onChange={() => handleToggleSuppressOverlay(other.name)}
+                            disabled={disabled}
+                          />
+                          <span>{other.displayName}</span>
+                        </label>
+                      ))
+                    )}
+                  </div>
+                )}
               </div>
             </div>
           )}
@@ -531,6 +604,91 @@ function OverlayPropertiesPanel({
         input:disabled {
           opacity: 0.5;
           cursor: not-allowed;
+        }
+
+        .queue-select {
+          flex: 1;
+          padding: 0.375rem 0.5rem;
+          border: 1px solid var(--border-color);
+          border-radius: var(--radius-sm);
+          background-color: var(--bg-primary);
+          color: var(--text-primary);
+          font-size: 0.75rem;
+        }
+
+        .queue-select:focus {
+          outline: none;
+          border-color: var(--primary);
+        }
+
+        .suppress-section {
+          margin-top: 0.5rem;
+        }
+
+        .suppress-toggle {
+          display: flex;
+          align-items: center;
+          gap: 0.5rem;
+          padding: 0.5rem 0;
+          background: none;
+          border: none;
+          cursor: pointer;
+          font-size: 0.75rem;
+          color: var(--text-secondary);
+        }
+
+        .suppress-toggle:hover:not(:disabled) {
+          color: var(--text-primary);
+        }
+
+        .suppress-toggle span:first-child {
+          font-size: 0.625rem;
+        }
+
+        .suppress-count {
+          padding: 0.125rem 0.375rem;
+          background-color: var(--primary);
+          color: white;
+          border-radius: var(--radius-sm);
+          font-size: 0.625rem;
+          font-weight: bold;
+        }
+
+        .suppress-list {
+          display: flex;
+          flex-direction: column;
+          gap: 0.25rem;
+          padding: 0.5rem;
+          background-color: var(--bg-tertiary);
+          border-radius: var(--radius-sm);
+          max-height: 150px;
+          overflow-y: auto;
+        }
+
+        .suppress-empty {
+          text-align: center;
+          font-size: 0.75rem;
+          color: var(--text-muted);
+          padding: 0.5rem;
+        }
+
+        .suppress-item {
+          display: flex;
+          align-items: center;
+          gap: 0.5rem;
+          padding: 0.25rem 0.5rem;
+          font-size: 0.75rem;
+          cursor: pointer;
+          border-radius: var(--radius-sm);
+        }
+
+        .suppress-item:hover {
+          background-color: var(--bg-secondary);
+        }
+
+        .suppress-item input {
+          width: 14px;
+          height: 14px;
         }
       `}</style>
     </div>
