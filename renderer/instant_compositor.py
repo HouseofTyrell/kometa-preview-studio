@@ -386,34 +386,57 @@ def create_streaming_overlay(services: List[str]) -> Optional[Image.Image]:
         services: List of streaming service names
 
     Returns:
-        Composite image with streaming service logos
+        Composite image with streaming service logos or text badges
     """
-    if not services or not HAS_OVERLAY_ASSETS:
+    if not services:
         return None
 
-    # Load service logos
-    logos = []
-    for service in services[:3]:  # Limit to 3 services
-        asset_data = get_streaming_asset(service)
-        if asset_data:
-            logo = load_png_overlay(asset_data, max_width=100, max_height=50)
-            if logo:
-                logos.append(logo)
+    # Try PNG assets first if available
+    if HAS_OVERLAY_ASSETS:
+        logos = []
+        for service in services[:3]:  # Limit to 3 services
+            asset_data = get_streaming_asset(service)
+            if asset_data:
+                logo = load_png_overlay(asset_data, max_width=100, max_height=50)
+                if logo:
+                    logos.append(logo)
 
-    if not logos:
+        if logos:
+            # Stack logos horizontally
+            total_width = sum(logo.width for logo in logos) + (len(logos) - 1) * 5
+            max_height_val = max(logo.height for logo in logos)
+
+            result = Image.new('RGBA', (total_width, max_height_val), (0, 0, 0, 0))
+
+            x = 0
+            for logo in logos:
+                y = (max_height_val - logo.height) // 2
+                result.paste(logo, (x, y), logo)
+                x += logo.width + 5
+
+            return result
+
+    # Fallback to text badges when PNG assets not available
+    badges = []
+    for service in services[:3]:
+        display_name = service.upper().replace('_', ' ')[:12]  # Truncate long names
+        badge = create_badge(display_name, width=120, height=40, font_size=24)
+        badges.append(badge)
+
+    if not badges:
         return None
 
-    # Stack logos horizontally
-    total_width = sum(logo.width for logo in logos) + (len(logos) - 1) * 5
-    max_height = max(logo.height for logo in logos)
+    # Stack text badges horizontally
+    total_width = sum(b.width for b in badges) + (len(badges) - 1) * 5
+    max_height_val = max(b.height for b in badges)
 
-    result = Image.new('RGBA', (total_width, max_height), (0, 0, 0, 0))
+    result = Image.new('RGBA', (total_width, max_height_val), (0, 0, 0, 0))
 
     x = 0
-    for logo in logos:
-        y = (max_height - logo.height) // 2
-        result.paste(logo, (x, y), logo)
-        x += logo.width + 5
+    for badge in badges:
+        y = (max_height_val - badge.height) // 2
+        result.paste(badge, (x, y), badge)
+        x += badge.width + 5
 
     return result
 
