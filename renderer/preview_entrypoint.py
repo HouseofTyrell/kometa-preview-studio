@@ -53,6 +53,13 @@ from caching import (
     check_cached_outputs,
     save_cache_hash,
     use_cached_outputs,
+    get_cached_outputs_for_targets,
+    merge_cached_and_new_outputs,
+)
+from overlay_fingerprints import (
+    determine_targets_needing_render,
+    save_target_fingerprints,
+    filter_preview_config_for_targets,
 )
 from xml_builders import extract_allowed_rating_keys
 from proxy_plex import PlexProxy
@@ -170,6 +177,64 @@ def main():
     else:
         config_hash = None
         logger.info("Output caching disabled (PREVIEW_OUTPUT_CACHE=0)")
+
+    # ================================================================
+    # Granular Per-Overlay Caching Check
+    # Determine which specific targets need re-rendering based on
+    # overlay fingerprints. This allows partial cache hits.
+    # ================================================================
+    targets_to_render: List[str] = []
+    cached_target_ids: List[str] = []
+    target_fingerprints: Dict[str, str] = {}
+    use_granular_cache = False
+
+    if OUTPUT_CACHE_ENABLED:
+        logger.info("=" * 60)
+        logger.info("Checking per-overlay fingerprints for granular caching...")
+        logger.info("=" * 60)
+
+        targets_to_render, cached_target_ids, target_fingerprints = (
+            determine_targets_needing_render(job_path, preview_config)
+        )
+
+        if not targets_to_render and cached_target_ids:
+            # All targets are cached - instant return
+            logger.info("=" * 60)
+            logger.info("GRANULAR CACHE HIT - All targets cached (instant return)")
+            logger.info("=" * 60)
+
+            cached_files = get_cached_outputs_for_targets(job_path, cached_target_ids)
+
+            summary = {
+                'timestamp': datetime.now().isoformat(),
+                'success': True,
+                'cached': True,
+                'granular_cache': True,
+                'cached_targets': cached_target_ids,
+                'config_hash': config_hash,
+                'target_fingerprints': target_fingerprints,
+                'exported_files': cached_files,
+                'output_files': [Path(f).name for f in cached_files.values()],
+            }
+            summary_path = output_dir / 'summary.json'
+            with open(summary_path, 'w') as f:
+                json.dump(summary, f, indent=2)
+
+            logger.info(f"Returning {len(cached_files)} cached outputs")
+            sys.exit(0)
+
+        elif cached_target_ids:
+            # Partial cache hit - only render changed targets
+            logger.info(f"PARTIAL CACHE HIT - {len(cached_target_ids)} cached, "
+                       f"{len(targets_to_render)} need rendering")
+            use_granular_cache = True
+
+            # Filter config to only include targets that need rendering
+            preview_config = filter_preview_config_for_targets(
+                preview_config, targets_to_render
+            )
+        else:
+            logger.info("No cached targets - full render required")
 
     # Extract Plex connection info
     plex_config = preview_config.get('plex', {})
@@ -393,8 +458,18 @@ def main():
                 if target_id in missing_targets:
                     missing_targets.remove(target_id)
 
+        # Merge with cached outputs if using granular caching
+        if use_granular_cache and cached_target_ids:
+            exported_files = merge_cached_and_new_outputs(
+                job_path, cached_target_ids, exported_files
+            )
+            # Remove cached targets from missing list
+            missing_targets = [t for t in missing_targets if t not in cached_target_ids]
+            logger.info(f"Merged {len(cached_target_ids)} cached outputs with "
+                       f"{len(exported_files) - len(cached_target_ids)} new renders")
+
         no_capture_error = False
-        if not successful_captures and not local_artifacts and targets:
+        if not successful_captures and not local_artifacts and targets and not cached_target_ids:
             no_capture_error = True
             logger.error("NO_CAPTURE_OUTPUTS: No uploads captured and no local artifacts found.")
             if request_log:
@@ -440,6 +515,10 @@ def main():
             'timestamp': datetime.now().isoformat(),
             'success': render_success,
             'cached': False,
+            'granular_cache': use_granular_cache,
+            'cached_targets': cached_target_ids if use_granular_cache else [],
+            'rendered_targets': targets_to_render if use_granular_cache else [],
+            'target_fingerprints': target_fingerprints,
             'config_hash': config_hash,
             'kometa_exit_code': exit_code,
             'blocked_write_attempts': blocked_requests,
@@ -511,9 +590,16 @@ def main():
         if render_success and config_hash:
             save_cache_hash(job_path, config_hash)
 
+        # Save target fingerprints for granular caching
+        if render_success and target_fingerprints:
+            save_target_fingerprints(job_path, target_fingerprints)
+            logger.info(f"Saved fingerprints for {len(target_fingerprints)} targets")
+
         # P0 Safety Check: If we have targets but no captured uploads, provide actionable error
+        # Skip this check if we have cached targets covering the missing captures
         targets_count = len(preview_targets) if preview_targets else 0
-        if targets_count > 0 and len(successful_captures) == 0:
+        targets_needing_capture = targets_count - len(cached_target_ids) if use_granular_cache else targets_count
+        if targets_needing_capture > 0 and len(successful_captures) == 0:
             logger.error("=" * 60)
             logger.error("UPLOAD CAPTURE FAILURE - No images were captured!")
             logger.error("=" * 60)

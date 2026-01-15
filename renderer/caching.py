@@ -135,3 +135,54 @@ def use_cached_outputs(job_path: Path) -> Tuple[bool, Dict[str, str]]:
         exported[target_id] = str(output_file)
 
     return len(exported) > 0, exported
+
+
+def get_cached_outputs_for_targets(
+    job_path: Path,
+    target_ids: List[str]
+) -> Dict[str, str]:
+    """
+    Get cached output files for specific targets.
+
+    Returns:
+        Dict mapping target_id -> output file path (only for targets that have cached outputs)
+    """
+    output_dir = job_path / 'output'
+    cached = {}
+
+    for target_id in target_ids:
+        # Look for output file matching this target
+        matches = list(output_dir.glob(f'{target_id}_after.*'))
+        if matches:
+            # Use the most recent if multiple exist
+            cached[target_id] = str(max(matches, key=lambda p: p.stat().st_mtime))
+
+    return cached
+
+
+def merge_cached_and_new_outputs(
+    job_path: Path,
+    cached_targets: List[str],
+    new_exported: Dict[str, str]
+) -> Dict[str, str]:
+    """
+    Merge cached outputs with newly rendered outputs.
+
+    Args:
+        job_path: Path to job directory
+        cached_targets: List of target IDs that should use cached outputs
+        new_exported: Dict of newly rendered target_id -> output_path
+
+    Returns:
+        Combined dict of all target outputs
+    """
+    merged = dict(new_exported)  # Start with new outputs
+
+    # Add cached outputs for targets that weren't re-rendered
+    cached_outputs = get_cached_outputs_for_targets(job_path, cached_targets)
+    for target_id, output_path in cached_outputs.items():
+        if target_id not in merged:
+            merged[target_id] = output_path
+            logger.info(f"Using cached output for {target_id}: {Path(output_path).name}")
+
+    return merged
