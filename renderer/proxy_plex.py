@@ -1020,6 +1020,9 @@ class PlexProxy:
         PlexProxyHandler.preview_targets = self.preview_targets
         PlexProxyHandler.metadata_cache = {}
         PlexProxyHandler.parent_rating_keys = set()
+
+        # Load persistent metadata cache if available
+        self._load_metadata_cache()
         PlexProxyHandler.forward_request_count = 0
         PlexProxyHandler.blocked_metadata_count = 0
         PlexProxyHandler.sections_get_count = 0
@@ -1066,9 +1069,47 @@ class PlexProxy:
             logger.warning(f"  FILTERING DISABLED: All items will be processed")
             logger.info(f"  Forwarding reads to: {self.real_plex_url}")
 
+    def _load_metadata_cache(self):
+        """Load persistent metadata cache from disk."""
+        cache_file = self.job_path / 'output' / '.metadata_cache.json'
+        if not cache_file.exists():
+            return
+
+        try:
+            import json
+            data = json.loads(cache_file.read_text())
+            PlexProxyHandler.metadata_cache = data.get('metadata_cache', {})
+            PlexProxyHandler.parent_rating_keys = set(data.get('parent_keys', []))
+            logger.info(
+                f"Loaded metadata cache: {len(PlexProxyHandler.metadata_cache)} items, "
+                f"{len(PlexProxyHandler.parent_rating_keys)} parent keys"
+            )
+        except Exception as e:
+            logger.warning(f"Failed to load metadata cache: {e}")
+
+    def _save_metadata_cache(self):
+        """Save metadata cache to disk for future runs."""
+        cache_file = self.job_path / 'output' / '.metadata_cache.json'
+        try:
+            import json
+            cache_file.parent.mkdir(parents=True, exist_ok=True)
+            data = {
+                'metadata_cache': PlexProxyHandler.metadata_cache,
+                'parent_keys': list(PlexProxyHandler.parent_rating_keys)
+            }
+            cache_file.write_text(json.dumps(data, indent=2))
+            logger.info(
+                f"Saved metadata cache: {len(PlexProxyHandler.metadata_cache)} items, "
+                f"{len(PlexProxyHandler.parent_rating_keys)} parent keys"
+            )
+        except Exception as e:
+            logger.warning(f"Failed to save metadata cache: {e}")
+
     def stop(self):
         """Stop the proxy server"""
         if self.server:
+            # Save metadata cache before stopping
+            self._save_metadata_cache()
             self.server.shutdown()
             logger.info("Plex proxy stopped")
 
