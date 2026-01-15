@@ -137,11 +137,11 @@ function buildKometaConfig(
   };
 
   // Copy libraries with overlay definitions (filtered by test options)
-  // By default, skip library processing to use fast instant compositor mode.
-  // Only include libraries if user explicitly opts into full Kometa builder mode.
+  // ALWAYS include libraries section for overlay positioning configuration.
+  // Even in fast manual mode, the instant compositor needs positioning data from overlay_files.
   const useFullBuilder = testOptions?.useFullKometaBuilder === true;
 
-  if (useFullBuilder && originalConfig.libraries) {
+  if (originalConfig.libraries) {
     const libraries: Record<string, unknown> = {};
 
     for (const [libName, libConfig] of Object.entries(originalConfig.libraries)) {
