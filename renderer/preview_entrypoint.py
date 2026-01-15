@@ -643,15 +643,27 @@ def main():
             save_target_fingerprints(job_path, target_fingerprints)
             logger.info(f"Saved fingerprints for {len(target_fingerprints)} targets")
 
-        # P0 Safety Check: If we have targets but no captured uploads, provide actionable error
-        # Skip this check if we have cached targets covering the missing captures
+        # P0 Safety Check: If we have targets but no output via any method, provide actionable error
+        # Skip this check if we have:
+        # - Cached targets covering the outputs
+        # - Local artifacts created (direct file writes)
+        # - Fast path mode (using instant compositor)
         targets_count = len(preview_targets) if preview_targets else 0
         targets_needing_capture = targets_count - len(cached_target_ids) if use_granular_cache else targets_count
-        if targets_needing_capture > 0 and len(successful_captures) == 0:
+        has_local_artifacts = len(local_artifacts) > 0
+        has_upload_captures = len(successful_captures) > 0
+
+        # Only show upload capture failure if we have no output via ANY method
+        if (targets_needing_capture > 0 and
+            not has_upload_captures and
+            not has_local_artifacts and
+            not use_fast_path):
             logger.error("=" * 60)
-            logger.error("UPLOAD CAPTURE FAILURE - No images were captured!")
+            logger.error("OUTPUT GENERATION FAILURE - No images were generated!")
             logger.error("=" * 60)
             logger.error(f"Targets: {targets_count}")
+            logger.error(f"Upload captures: {len(successful_captures)}")
+            logger.error(f"Local artifacts: {len(local_artifacts)}")
             logger.error(f"Total blocked requests: {len(blocked_requests)}")
             logger.error(f"Total capture attempts: {len(captured_uploads)}")
 
@@ -668,7 +680,7 @@ def main():
                     )
             else:
                 logger.error("No PUT/POST requests were received by the proxy!")
-                logger.error("Check if Kometa is actually sending upload requests.")
+                logger.error("Kometa may be writing directly to disk (local artifact mode).")
 
             # Show failed captures
             if failed_captures:
@@ -681,13 +693,26 @@ def main():
             logger.error("=" * 60)
 
         # Report results
+        # Count output files from all sources:
+        # 1. Exported files (*_after.*)
+        # 2. Local artifacts in output/previews/
+        # 3. Fast path files
         output_count = len(list(output_dir.glob('*_after.*')))
-        if output_count > 0 and len(missing_targets) == 0 and not no_capture_error:
-            logger.info(f"Preview rendering complete: {output_count} images generated")
+        preview_count = len(list((output_dir / 'previews').glob('*__*.png'))) if (output_dir / 'previews').exists() else 0
+        total_output_count = output_count + preview_count + len(local_artifacts)
+        # Determine success based on total outputs from all sources
+        if total_output_count > 0 and len(missing_targets) == 0 and not no_capture_error:
+            logger.info(f"Preview rendering complete: {total_output_count} images generated")
+            if output_count > 0:
+                logger.info(f"  - {output_count} via upload capture")
+            if preview_count > 0:
+                logger.info(f"  - {preview_count} via local artifact")
+            if len(local_artifacts) > 0 and preview_count == 0:
+                logger.info(f"  - {len(local_artifacts)} via local artifact export")
             final_exit = 0
-        elif output_count > 0:
+        elif total_output_count > 0:
             logger.warning(
-                f"Preview rendering partial: {output_count} images generated, "
+                f"Preview rendering partial: {total_output_count} images generated, "
                 f"{len(missing_targets)} targets missing"
             )
             final_exit = 1
@@ -697,6 +722,7 @@ def main():
             if targets_count > 0:
                 logger.error(f"  - {targets_count} targets were expected")
                 logger.error(f"  - {len(blocked_requests)} write requests were blocked")
+                logger.error(f"  - {len(local_artifacts)} local artifacts found")
                 logger.error(f"  - {len(successful_captures)} images were captured")
                 logger.error("  Check logs above for UPLOAD_CAPTURED or UPLOAD_IGNORED messages")
             final_exit = 1
