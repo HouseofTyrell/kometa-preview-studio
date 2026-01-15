@@ -96,6 +96,81 @@ router.get('/image/:jobId/:folder/:filename', async (req: Request, res: Response
 });
 
 /**
+ * GET /api/preview/image/:jobId/:folder/:subfolder/:filename
+ * Serve a specific image from job subfolder (e.g., output/draft/)
+ */
+router.get('/image/:jobId/:folder/:subfolder/:filename', async (req: Request, res: Response) => {
+  try {
+    const { jobId, folder, subfolder, filename } = req.params;
+
+    // Validate folder and subfolder
+    if (folder !== 'output') {
+      res.status(400).json({ error: 'Invalid folder for subfolders. Must be "output".' });
+      return;
+    }
+    if (subfolder !== 'draft' && subfolder !== 'previews') {
+      res.status(400).json({ error: 'Invalid subfolder. Must be "draft" or "previews".' });
+      return;
+    }
+
+    const jobManager = getJobManager();
+    // Get base output path and append subfolder
+    const basePath = jobManager.getImagePath(jobId, folder, '');
+    if (!basePath) {
+      res.status(400).json({ error: 'Invalid path' });
+      return;
+    }
+
+    // Sanitize filename to prevent path traversal
+    const sanitizedFilename = path.basename(filename);
+    if (sanitizedFilename !== filename) {
+      res.status(400).json({ error: 'Invalid filename' });
+      return;
+    }
+
+    const imagePath = path.join(basePath, subfolder, sanitizedFilename);
+
+    if (!(await pathExists(imagePath))) {
+      res.status(404).json({ error: 'Image not found' });
+      return;
+    }
+
+    // Determine content type
+    const ext = path.extname(filename).toLowerCase();
+    const contentTypes: Record<string, string> = {
+      '.jpg': 'image/jpeg',
+      '.jpeg': 'image/jpeg',
+      '.png': 'image/png',
+      '.webp': 'image/webp',
+      '.gif': 'image/gif',
+    };
+
+    const contentType = contentTypes[ext] || 'application/octet-stream';
+
+    res.setHeader('Content-Type', contentType);
+    // Shorter cache for draft images since they're temporary
+    res.setHeader('Cache-Control', subfolder === 'draft' ? 'public, max-age=60' : 'public, max-age=3600');
+
+    // Stream the file with error handling
+    const stream = fs.createReadStream(imagePath);
+    stream.on('error', (err) => {
+      console.error('Stream error serving image:', err);
+      if (!res.headersSent) {
+        res.status(500).json({ error: 'Failed to read image file' });
+      }
+    });
+    stream.pipe(res);
+
+  } catch (err) {
+    console.error('Image serve error:', err);
+    res.status(500).json({
+      error: 'Failed to serve image',
+      details: err instanceof Error ? err.message : 'Unknown error',
+    });
+  }
+});
+
+/**
  * GET /api/preview/logs/:jobId
  * Get job logs
  */

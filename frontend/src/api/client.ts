@@ -40,6 +40,7 @@ export interface JobArtifactItem {
   type: string;
   beforeUrl: string;
   afterUrl: string;
+  draftUrl?: string;  // Instant preview shown while Kometa renders
   baseSource: string;
   warnings: string[];
 }

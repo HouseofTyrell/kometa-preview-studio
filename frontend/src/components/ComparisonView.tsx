@@ -4,13 +4,19 @@ import './ComparisonView.css'
 interface ComparisonViewProps {
   beforeUrl?: string
   afterUrl?: string
+  draftUrl?: string  // Instant preview shown while Kometa renders
 }
 
-function ComparisonView({ beforeUrl, afterUrl }: ComparisonViewProps) {
+function ComparisonView({ beforeUrl, afterUrl, draftUrl }: ComparisonViewProps) {
   const [beforeLoaded, setBeforeLoaded] = useState(false)
   const [afterLoaded, setAfterLoaded] = useState(false)
   const [beforeError, setBeforeError] = useState(false)
   const [afterError, setAfterError] = useState(false)
+
+  // Determine which URL to show for the "after" side
+  // Prefer final afterUrl, fall back to draftUrl
+  const displayAfterUrl = afterUrl || draftUrl
+  const isShowingDraft = !afterUrl && !!draftUrl
 
   // Reset loading state when URLs change
   useEffect(() => {
@@ -21,7 +27,7 @@ function ComparisonView({ beforeUrl, afterUrl }: ComparisonViewProps) {
   useEffect(() => {
     setAfterLoaded(false)
     setAfterError(false)
-  }, [afterUrl])
+  }, [displayAfterUrl])
 
   return (
     <div className="comparison-view">
@@ -56,30 +62,41 @@ function ComparisonView({ beforeUrl, afterUrl }: ComparisonViewProps) {
       <div className="comparison-divider" />
 
       <div className="comparison-side">
-        <div className="comparison-label">After</div>
+        <div className="comparison-label">
+          After
+          {isShowingDraft && <span className="draft-badge">Draft</span>}
+        </div>
         <div className="comparison-image-container">
-          {!afterUrl && (
+          {!displayAfterUrl && (
             <div className="comparison-placeholder">
               <div className="loading-spinner" />
               <span>Rendering...</span>
             </div>
           )}
-          {afterUrl && !afterLoaded && !afterError && (
+          {displayAfterUrl && !afterLoaded && !afterError && (
             <div className="comparison-loading">
               <div className="loading-spinner" />
             </div>
           )}
-          {afterUrl && afterError && (
+          {displayAfterUrl && afterError && (
             <div className="comparison-error">Failed to load</div>
           )}
-          {afterUrl && (
-            <img
-              src={afterUrl}
-              alt="After overlay"
-              className={`comparison-image ${afterLoaded ? 'loaded' : ''}`}
-              onLoad={() => setAfterLoaded(true)}
-              onError={() => setAfterError(true)}
-            />
+          {displayAfterUrl && (
+            <>
+              <img
+                src={displayAfterUrl}
+                alt="After overlay"
+                className={`comparison-image ${afterLoaded ? 'loaded' : ''}`}
+                onLoad={() => setAfterLoaded(true)}
+                onError={() => setAfterError(true)}
+              />
+              {isShowingDraft && afterLoaded && (
+                <div className="draft-overlay">
+                  <div className="loading-spinner small" />
+                  <span>Rendering final...</span>
+                </div>
+              )}
+            </>
           )}
         </div>
       </div>

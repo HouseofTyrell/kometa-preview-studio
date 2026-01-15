@@ -442,6 +442,20 @@ class JobManager extends EventEmitter {
         }
       }
 
+      // Find draft file (instant preview shown while Kometa renders)
+      let draftUrl = '';
+      const draftDir = path.join(paths.outputDir, 'draft');
+      if (await pathExists(draftDir)) {
+        for (const ext of imageExtensions) {
+          const draftFile = `${target.id}_draft.${ext}`;
+          const draftPath = path.join(draftDir, draftFile);
+          if (await pathExists(draftPath)) {
+            draftUrl = `/api/preview/image/${jobId}/output/draft/${draftFile}`;
+            break;
+          }
+        }
+      }
+
       if (await pathExists(beforePath)) {
         items.push({
           id: target.id,
@@ -449,6 +463,7 @@ class JobManager extends EventEmitter {
           type: target.type,
           beforeUrl: `/api/preview/image/${jobId}/input/${beforeFile}`,
           afterUrl,
+          draftUrl,
           baseSource: target.baseSource,
           warnings: target.warnings,
         });

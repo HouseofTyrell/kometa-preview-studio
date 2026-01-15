@@ -3,16 +3,18 @@ import { useState, useEffect } from 'react'
 interface BeforeAfterProps {
   beforeUrl?: string
   afterUrl?: string
+  draftUrl?: string  // Instant preview shown while Kometa renders
   showAfter: boolean
 }
 
-function BeforeAfter({ beforeUrl, afterUrl, showAfter }: BeforeAfterProps) {
+function BeforeAfter({ beforeUrl, afterUrl, draftUrl, showAfter }: BeforeAfterProps) {
   const [imageLoaded, setImageLoaded] = useState(false)
   const [imageError, setImageError] = useState(false)
 
-  // When showAfter is true but afterUrl is unavailable, fall back to beforeUrl
-  const currentUrl = showAfter ? (afterUrl || beforeUrl) : beforeUrl
-  const isShowingFallback = showAfter && !afterUrl && !!beforeUrl
+  // When showAfter is true: prefer afterUrl, then draftUrl, then beforeUrl
+  const currentUrl = showAfter ? (afterUrl || draftUrl || beforeUrl) : beforeUrl
+  const isShowingDraft = showAfter && !afterUrl && !!draftUrl
+  const isShowingFallback = showAfter && !afterUrl && !draftUrl && !!beforeUrl
 
   // Reset loading state when URL changes
   useEffect(() => {
@@ -46,6 +48,13 @@ function BeforeAfter({ beforeUrl, afterUrl, showAfter }: BeforeAfterProps) {
         <div className="rendering-overlay">
           <div className="loading-spinner" />
           <span>Rendering...</span>
+        </div>
+      )}
+
+      {isShowingDraft && imageLoaded && (
+        <div className="draft-rendering-overlay">
+          <div className="loading-spinner small" />
+          <span>Rendering final...</span>
         </div>
       )}
 
@@ -124,6 +133,22 @@ function BeforeAfter({ beforeUrl, afterUrl, showAfter }: BeforeAfterProps) {
           font-size: 0.875rem;
         }
 
+        .draft-rendering-overlay {
+          position: absolute;
+          bottom: 0;
+          left: 0;
+          right: 0;
+          padding: 0.5rem;
+          display: flex;
+          align-items: center;
+          justify-content: center;
+          gap: 0.5rem;
+          background: linear-gradient(transparent, rgba(0, 0, 0, 0.7));
+          color: var(--text-primary);
+          font-size: 0.625rem;
+          font-weight: 500;
+        }
+
         .loading-spinner {
           width: 24px;
           height: 24px;
@@ -131,6 +156,12 @@ function BeforeAfter({ beforeUrl, afterUrl, showAfter }: BeforeAfterProps) {
           border-top-color: var(--accent-primary);
           border-radius: 50%;
           animation: spin 1s linear infinite;
+        }
+
+        .loading-spinner.small {
+          width: 12px;
+          height: 12px;
+          border-width: 1.5px;
         }
 
         @keyframes spin {

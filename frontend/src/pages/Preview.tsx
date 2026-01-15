@@ -153,13 +153,14 @@ function PreviewPage({
   const hasConfig = !!configYaml
 
   // Helper to look up artifact URLs for a target
-  const getArtifactUrls = useCallback((targetId: string): { beforeUrl?: string; afterUrl?: string } => {
+  const getArtifactUrls = useCallback((targetId: string): { beforeUrl?: string; afterUrl?: string; draftUrl?: string } => {
     if (!artifacts?.items) return {}
     const item = artifacts.items.find((i) => i.id === targetId)
     if (!item) return {}
     return {
       beforeUrl: item.beforeUrl || undefined,
       afterUrl: item.afterUrl || undefined,
+      draftUrl: item.draftUrl || undefined,
     }
   }, [artifacts])
 
@@ -256,6 +257,7 @@ function PreviewPage({
                   mediaType={target.type}
                   beforeUrl={urls.beforeUrl}
                   afterUrl={urls.afterUrl}
+                  draftUrl={urls.draftUrl}
                   isLoading={isRunning}
                   jobId={jobId}
                 />

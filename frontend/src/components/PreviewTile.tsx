@@ -19,6 +19,7 @@ interface PreviewTileProps {
   mediaType: 'movie' | 'show' | 'season' | 'episode'
   beforeUrl?: string
   afterUrl?: string
+  draftUrl?: string  // Instant preview shown while Kometa renders
   isLoading: boolean
   jobId: string | null
 }
@@ -39,6 +40,7 @@ function PreviewTile({
   mediaType,
   beforeUrl,
   afterUrl,
+  draftUrl,
   isLoading,
   jobId,
 }: PreviewTileProps) {
@@ -102,7 +104,7 @@ function PreviewTile({
     setZoom(1)
   }, [])
 
-  const hasImages = beforeUrl || afterUrl
+  const hasImages = beforeUrl || afterUrl || draftUrl
 
   const handleDownload = () => {
     if (afterUrl && jobId) {
@@ -160,6 +162,7 @@ function PreviewTile({
             <ComparisonView
               beforeUrl={beforeUrl}
               afterUrl={afterUrl}
+              draftUrl={draftUrl}
             />
           </ZoomableImage>
         )}
@@ -175,6 +178,7 @@ function PreviewTile({
               <BeforeAfter
                 beforeUrl={beforeUrl}
                 afterUrl={afterUrl}
+                draftUrl={draftUrl}
                 showAfter={animateShowAfter}
               />
               <div className={`animate-indicator ${animateShowAfter ? 'after' : 'before'}`}>
@@ -194,6 +198,7 @@ function PreviewTile({
             <BeforeAfter
               beforeUrl={beforeUrl}
               afterUrl={afterUrl}
+              draftUrl={draftUrl}
               showAfter={viewMode === 'after'}
             />
           </ZoomableImage>
