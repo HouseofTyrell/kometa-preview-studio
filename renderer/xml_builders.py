@@ -5,6 +5,7 @@ This module provides functions for building synthetic Plex XML responses
 and filtering XML responses based on allowed rating keys.
 """
 
+import re
 import xml.etree.ElementTree as ET
 from typing import Any, Dict, List, Optional, Set
 from urllib.parse import urlsplit, parse_qs
@@ -285,6 +286,72 @@ def build_synthetic_section_detail_xml(section_id: str, targets: List[Dict[str, 
     return ET.tostring(root, encoding='unicode').encode('utf-8')
 
 
+def build_synthetic_collections_xml(section_id: str, path: Optional[str] = None) -> bytes:
+    """
+    Build synthetic /library/sections/{id}/collections XML response.
+
+    Returns an empty collections list to prevent PlexAPI from learning about
+    the real Plex library type at this section ID. If this endpoint forwards
+    to real Plex, and section ID 1 on real Plex is a different library type,
+    PlexAPI will incorrectly determine available libtypes, causing:
+    "Unknown libtype 'movie' for this library. Available libtypes: ['collection']"
+
+    If includeMeta=1 is in the path query string, includes Meta elements
+    with FilteringType information for PlexAPI's _loadFilters method.
+
+    Args:
+        section_id: The requested section ID
+        path: Optional full request path (including query string) for checking includeMeta
+
+    Returns:
+        XML bytes for an empty MediaContainer (no collections) with optional Meta elements
+    """
+    root = ET.Element('MediaContainer', {
+        'size': '0',
+        'allowSync': '1',
+        'art': f'/:/resources/collection-fanart.jpg',
+        'identifier': 'com.plexapp.plugins.library',
+        'librarySectionID': section_id,
+        'librarySectionTitle': 'Movies',
+        'librarySectionUUID': f'mock-uuid-{section_id}',
+        'mediaTagPrefix': '/system/bundle/media/flags/',
+        'mediaTagVersion': '1',
+        'thumb': f'/:/resources/collection.png',
+        'title1': 'Movies',
+        'title2': 'Collections',
+        'viewGroup': 'collection',
+        'viewMode': '65592',
+    })
+
+    # Add Meta element with collection FilteringType if includeMeta=1 in query
+    # PlexAPI's _loadFilters method looks for these Meta elements
+    if path and 'includeMeta=1' in path:
+        meta = ET.SubElement(root, 'Meta')
+        collection_type = ET.SubElement(meta, 'Type', {
+            'type': 'collection',
+            'title': 'Collections',
+            'active': '1',
+            'key': f'/library/sections/{section_id}/collections',
+        })
+        # Add common filter fields for collections
+        collection_filters = [
+            ('label', 'string', 'Label'),
+            ('collection', 'string', 'Collection'),
+            ('addedAt', 'date', 'Date Added'),
+        ]
+        for filter_key, filter_type, filter_title in collection_filters:
+            ET.SubElement(collection_type, 'Filter', {
+                'filter': filter_key,
+                'filterType': filter_type,
+                'key': filter_key,
+                'title': filter_title,
+                'type': 'filter',
+            })
+
+    # Return empty container (no collections but with Meta if requested)
+    return ET.tostring(root, encoding='unicode').encode('utf-8')
+
+
 def build_synthetic_filter_types_xml(section_id: str, targets: List[Dict[str, Any]]) -> bytes:
     """
     Build synthetic /library/sections/{id}/filterTypes XML response.
@@ -497,6 +564,13 @@ def build_synthetic_library_sections_xml(targets: List[Dict[str, Any]]) -> bytes
             'scanner': section['scanner'],
             'language': 'en-US',
             'uuid': f'mock-uuid-{section["key"]}',
+            'scannedAt': '1700000000',
+            'createdAt': '1600000000',
+            'updatedAt': '1700000000',
+            'content': '1',
+            'directory': '1',
+            'contentChangedAt': '1700000000',
+            'hidden': '0',
         })
 
     return ET.tostring(root, encoding='unicode').encode('utf-8')
@@ -584,21 +658,25 @@ def build_synthetic_listing_xml(
     targets: List[Dict[str, Any]],
     section_id: Optional[str] = None,
     query: Optional[str] = None,
-    metadata_cache: Optional[Dict[str, ET.Element]] = None
+    metadata_cache: Optional[Dict[str, ET.Element]] = None,
+    path: Optional[str] = None
 ) -> bytes:
     """
     Build synthetic XML for library listing endpoints.
 
     Creates a MediaContainer with only the preview target items.
+    If includeMeta=1 is in the path query string, includes Meta elements
+    with FilteringType information for PlexAPI's _loadFilters method.
 
     Args:
         targets: List of preview targets
         section_id: Optional library section ID to filter by
         query: Optional search query to filter by
         metadata_cache: Optional cache of metadata XML elements keyed by ratingKey
+        path: Optional full request path (including query string) for checking includeMeta
 
     Returns:
-        XML bytes for MediaContainer with Video/Directory elements
+        XML bytes for MediaContainer with Video/Directory elements and optional Meta elements
     """
     items = []
 
@@ -751,6 +829,76 @@ def build_synthetic_listing_xml(
     for item in items:
         root.append(item)
 
+    # Add Meta elements with FilteringType if includeMeta=1 in query
+    # PlexAPI's _loadFilters method looks for these Meta elements to populate availableLibtypes
+    if path and 'includeMeta=1' in path:
+        # Determine library type from targets
+        has_movies = any(t.get('type') in ('movie', 'movies') for t in targets)
+        has_shows = any(t.get('type') in ('show', 'shows', 'series', 'season', 'episode') for t in targets)
+
+        # Add movie FilteringType Meta element with common filters
+        if has_movies or section_id == '1':
+            meta = ET.SubElement(root, 'Meta')
+            filtering_type = ET.SubElement(meta, 'Type', {
+                'type': 'movie',
+                'title': 'Movies',
+                'active': '1',
+                'key': '/library/sections/1/all?type=1',
+            })
+            # Add common filter fields that Kometa uses
+            common_filters = [
+                ('label', 'string', 'Label'),
+                ('resolution', 'string', 'Resolution'),
+                ('audioCodec', 'string', 'Audio Codec'),
+                ('videoCodec', 'string', 'Video Codec'),
+                ('hdr', 'boolean', 'HDR'),
+                ('genre', 'string', 'Genre'),
+                ('year', 'integer', 'Year'),
+                ('contentRating', 'string', 'Content Rating'),
+                ('studio', 'string', 'Studio'),
+                ('collection', 'string', 'Collection'),
+                ('director', 'string', 'Director'),
+                ('actor', 'string', 'Actor'),
+                ('addedAt', 'date', 'Date Added'),
+                ('rating', 'float', 'Critic Rating'),
+                ('audienceRating', 'float', 'Audience Rating'),
+            ]
+            for filter_key, filter_type, filter_title in common_filters:
+                ET.SubElement(filtering_type, 'Filter', {
+                    'filter': filter_key,
+                    'filterType': filter_type,
+                    'key': filter_key,
+                    'title': filter_title,
+                    'type': 'filter',
+                })
+
+        # Add show FilteringTypes if needed
+        if has_shows or section_id == '2':
+            # Show type
+            meta = ET.SubElement(root, 'Meta')
+            ET.SubElement(meta, 'Type', {
+                'type': 'show',
+                'title': 'Shows',
+                'active': '1',
+                'key': '/library/sections/2/all?type=2',
+            })
+            # Season type
+            meta = ET.SubElement(root, 'Meta')
+            ET.SubElement(meta, 'Type', {
+                'type': 'season',
+                'title': 'Seasons',
+                'active': '0',
+                'key': '/library/sections/2/all?type=3',
+            })
+            # Episode type
+            meta = ET.SubElement(root, 'Meta')
+            ET.SubElement(meta, 'Type', {
+                'type': 'episode',
+                'title': 'Episodes',
+                'active': '0',
+                'key': '/library/sections/2/all?type=4',
+            })
+
     return ET.tostring(root, encoding='unicode').encode('utf-8')
 
 
@@ -885,6 +1033,24 @@ def is_filter_types_endpoint(path: str) -> Optional[str]:
     """
     path_base = path.split('?')[0]
     match = LIBRARY_FILTER_TYPES_PATTERN.match(path_base)
+    return match.group(1) if match else None
+
+
+def is_collections_endpoint(path: str) -> Optional[str]:
+    """
+    Check if path is /library/sections/{id}/collections.
+
+    This endpoint is called when Kometa or PlexAPI queries for collections
+    in a library section. If this endpoint forwards to the real Plex server,
+    it can return metadata about the wrong library type (e.g., if the real
+    Plex section 1 is a different library), causing:
+    "Unknown libtype 'movie' for this library. Available libtypes: ['collection']"
+
+    Returns the section ID if matched, None otherwise.
+    """
+    path_base = path.split('?')[0].rstrip('/')
+    # Match /library/sections/{id}/collections
+    match = re.match(r'^/library/sections/(\d+)/collections$', path_base)
     return match.group(1) if match else None
 
 

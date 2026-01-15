@@ -34,12 +34,14 @@ from xml_builders import (
     is_library_section_detail_endpoint,
     is_children_endpoint,
     is_filter_types_endpoint,
+    is_collections_endpoint,
     extract_rating_key_from_path,
     extract_section_id,
     extract_search_query,
     build_synthetic_library_sections_xml,
     build_synthetic_section_detail_xml,
     build_synthetic_filter_types_xml,
+    build_synthetic_collections_xml,
     build_synthetic_listing_xml,
     build_synthetic_children_xml,
     extract_image_from_body,
@@ -140,6 +142,7 @@ class PlexProxyHandler(BaseHTTPRequestHandler):
         is_meta = is_metadata_endpoint(path)
         is_sections = is_library_sections_endpoint(path)
         filter_types_section_id = is_filter_types_endpoint(path)
+        collections_section_id = is_collections_endpoint(path)
         section_detail_id = is_library_section_detail_endpoint(path)
         children_parent = is_children_endpoint(path)
 
@@ -147,7 +150,8 @@ class PlexProxyHandler(BaseHTTPRequestHandler):
             f"PROXY_GET path={path_base} is_listing={is_listing} "
             f"is_metadata={is_meta} is_sections={is_sections} "
             f"section_detail={section_detail_id is not None} "
-            f"filter_types={filter_types_section_id is not None}"
+            f"filter_types={filter_types_section_id is not None} "
+            f"collections={collections_section_id is not None}"
         )
 
         # Mock library mode: return synthetic XML for listing endpoints
@@ -162,6 +166,13 @@ class PlexProxyHandler(BaseHTTPRequestHandler):
             # Fixes "Unknown libtype 'movie' ... Available libtypes: ['collection']" error
             if filter_types_section_id:
                 self._handle_mock_filter_types(filter_types_section_id)
+                return
+
+            # Handle /library/sections/{id}/collections - P0 libtype fix
+            # This prevents PlexAPI from querying real Plex and learning the wrong library type
+            # Must be checked BEFORE section_detail to avoid matching the more general pattern
+            if collections_section_id:
+                self._handle_mock_collections(collections_section_id)
                 return
 
             # Handle /library/sections/{id} (specific section detail) - P0 libtype fix
@@ -539,8 +550,44 @@ class PlexProxyHandler(BaseHTTPRequestHandler):
 
         self._send_xml_response(xml_bytes)
 
+    def _handle_mock_collections(self, section_id: str):
+        """
+        Handle /library/sections/{id}/collections in mock mode.
+
+        Returns an empty collections list to prevent PlexAPI from querying the
+        real Plex server and learning about the wrong library type. This fixes
+        the "Unknown libtype 'movie' ... Available libtypes: ['collection']" error
+        that occurs when the real Plex section at this ID has a different type.
+
+        If includeMeta=1 is in query string, includes FilteringType Meta elements
+        for PlexAPI's _loadFilters method.
+        """
+        xml_bytes = build_synthetic_collections_xml(section_id, path=self.path)
+
+        # Debug logging
+        if DEBUG_MOCK_XML:
+            logger.debug(f"MOCK_COLLECTIONS_XML: {xml_bytes[:500].decode('utf-8', errors='replace')}")
+
+        logger.info(f"MOCK_COLLECTIONS section_id={section_id} collection_count=0")
+
+        with self.data_lock:
+            self.mock_list_requests.append({
+                'path': f'/library/sections/{section_id}/collections',
+                'type': 'collections',
+                'section_id': section_id,
+                'collection_count': 0,
+                'timestamp': datetime.now().isoformat()
+            })
+
+        self._send_xml_response(xml_bytes)
+
     def _handle_mock_listing(self, path: str):
-        """Handle listing endpoints in mock mode - return synthetic item list."""
+        """
+        Handle listing endpoints in mock mode - return synthetic item list.
+
+        If includeMeta=1 is in query string, includes FilteringType Meta elements
+        for PlexAPI's _loadFilters method.
+        """
         section_id = extract_section_id(path)
         query = extract_search_query(path)
 
@@ -548,7 +595,8 @@ class PlexProxyHandler(BaseHTTPRequestHandler):
             self.preview_targets,
             section_id=section_id,
             query=query,
-            metadata_cache=self.metadata_cache
+            metadata_cache=self.metadata_cache,
+            path=path
         )
 
         # Debug logging

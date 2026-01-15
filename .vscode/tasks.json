@@ -3,20 +3,35 @@
   "tasks": [
     {
       "label": "Start Kometa Preview Studio",
-      "type": "shell",
-      "command": "${workspaceFolder}\\scripts\\start.bat",
+      "type": "process",
+      "command": "/bin/bash",
+      "args": ["${workspaceFolder}/scripts/start.sh"],
+      "windows": {
+        "type": "shell",
+        "command": "${workspaceFolder}\\scripts\\start.bat"
+      },
       "problemMatcher": []
     },
     {
       "label": "Stop Kometa Preview Studio",
-      "type": "shell",
-      "command": "${workspaceFolder}\\scripts\\stop.bat",
+      "type": "process",
+      "command": "/bin/bash",
+      "args": ["${workspaceFolder}/scripts/stop.sh"],
+      "windows": {
+        "type": "shell",
+        "command": "${workspaceFolder}\\scripts\\stop.bat"
+      },
       "problemMatcher": []
     },
     {
       "label": "Reset Kometa Preview Studio",
-      "type": "shell",
-      "command": "${workspaceFolder}\\scripts\\reset.bat",
+      "type": "process",
+      "command": "/bin/bash",
+      "args": ["${workspaceFolder}/scripts/reset.sh"],
+      "windows": {
+        "type": "shell",
+        "command": "${workspaceFolder}\\scripts\\reset.bat"
+      },
       "problemMatcher": []
     }
   ]
