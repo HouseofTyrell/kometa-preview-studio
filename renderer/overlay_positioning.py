@@ -95,13 +95,15 @@ def get_position_for_target(
     1. overlay_name:builder_level (e.g., 'resolution:episode')
     2. overlay_name (default, e.g., 'resolution')
 
+    Then merges with Kometa defaults for the overlay type to fill in missing values.
+
     Args:
         overlay_name: Name of overlay (e.g., 'resolution', 'ratings')
         target_type: Type of target ('movie', 'show', 'season', 'episode')
         overlay_positions: Dict of position configs from parse_overlay_positions()
 
     Returns:
-        Position config dict, or None if not found
+        Position config dict merged with defaults, or None if not found
     """
     # Map target types to builder levels
     # Movies and shows don't have builder_level
@@ -113,16 +115,27 @@ def get_position_for_target(
         builder_level = 'episode'
 
     # Try level-specific first if applicable
+    position_config = None
     if builder_level:
         level_key = f"{overlay_name}:{builder_level}"
         if level_key in overlay_positions:
-            return overlay_positions[level_key]
+            position_config = overlay_positions[level_key]
 
     # Fall back to default (no builder_level)
-    if overlay_name in overlay_positions:
-        return overlay_positions[overlay_name]
+    if not position_config and overlay_name in overlay_positions:
+        position_config = overlay_positions[overlay_name]
 
-    return None
+    if not position_config:
+        return None
+
+    # Merge with Kometa defaults for this overlay type
+    # This ensures that if user only specifies horizontal_position,
+    # we still get the correct vertical_align default (e.g., bottom for ratings)
+    defaults = get_default_position_config(overlay_name)
+    merged = defaults.copy()
+    merged.update(position_config)
+
+    return merged
 
 
 def calculate_position(
