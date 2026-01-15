@@ -137,7 +137,11 @@ function buildKometaConfig(
   };
 
   // Copy libraries with overlay definitions (filtered by test options)
-  if (originalConfig.libraries) {
+  // SKIP this entirely if manual mode is enabled - manual mode bypasses Kometa's builder
+  // and uses instant_compositor directly, so library definitions are unnecessary and slow
+  const isManualMode = testOptions?.manualBuilderConfig?.enabled === true;
+
+  if (!isManualMode && originalConfig.libraries) {
     const libraries: Record<string, unknown> = {};
 
     for (const [libName, libConfig] of Object.entries(originalConfig.libraries)) {
