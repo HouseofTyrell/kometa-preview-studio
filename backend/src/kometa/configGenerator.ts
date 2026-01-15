@@ -100,6 +100,7 @@ function buildKometaConfig(
   config.settings = {
     cache: false,
     cache_expiration: 0,
+    asset_directory: '/overlay-assets',  // Local overlay assets for Kometa v2.2.2 workaround
     asset_folders: false,
     create_asset_folders: false,
     prioritize_assets: false,

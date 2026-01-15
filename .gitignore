@@ -8,6 +8,7 @@ build/
 # Runtime directories (root level only)
 /jobs/
 /cache/
+/overlay-assets/
 
 # Environment files
 .env

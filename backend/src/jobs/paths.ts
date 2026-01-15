@@ -87,3 +87,11 @@ export function getUserPaths(): {
 export function getCacheHostPath(): string | undefined {
   return process.env.CACHE_HOST_PATH;
 }
+
+/**
+ * Get the HOST path for overlay assets directory (for Docker volume mounts)
+ * This contains Kometa default overlay images (resolution, etc.)
+ */
+export function getOverlayAssetsHostPath(): string | undefined {
+  return process.env.OVERLAY_ASSETS_HOST_PATH;
+}

@@ -25,6 +25,8 @@ services:
       - KOMETA_IMAGE_TAG=${KOMETA_IMAGE_TAG:-v2.2.2}
       # Cache directory for TMDb/external API data (persists between preview runs)
       - CACHE_HOST_PATH=${PWD}/cache
+      # Overlay assets directory (Kometa default overlay images)
+      - OVERLAY_ASSETS_HOST_PATH=${PWD}/overlay-assets
       # Optional: Mount user assets
       # - USER_ASSETS_PATH=/user_assets
       # Optional: Mount user Kometa config for Original Posters
@@ -33,6 +35,7 @@ services:
       - ./jobs:/app/jobs
       - ./fonts:/app/fonts:ro
       - ./cache:/app/cache:rw
+      - ./overlay-assets:/app/overlay-assets:ro
       - /var/run/docker.sock:/var/run/docker.sock
       # Optional: Uncomment and modify for your asset directory
       # - /path/to/your/assets:/user_assets:ro

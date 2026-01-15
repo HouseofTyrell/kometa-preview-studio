@@ -11,6 +11,7 @@ export interface RunnerConfig {
   fontsPath: string;         // Path inside backend container
   fontsHostPath: string;     // Path on Docker host (for child container mounts)
   cacheHostPath?: string;    // Path on Docker host for persistent Kometa cache (TMDb, etc.)
+  overlayAssetsHostPath?: string; // Path on Docker host for Kometa default overlay images
   userAssetsPath?: string;
   userKometaConfigPath?: string;
 }
@@ -275,6 +276,13 @@ export class KometaRunner extends EventEmitter {
       // 2. /jobs/config/cache - where Kometa actually stores the cache
       binds.push(`${this.config.cacheHostPath}:/kometa_cache:rw`);
       binds.push(`${this.config.cacheHostPath}:/jobs/config/cache:rw`);
+    }
+
+    // Overlay assets directory for Kometa default overlay images (read-only)
+    // This contains workaround for Kometa v2.2.2 bug where it looks for resolution/resolution/4k.png
+    // instead of the correct resolution/overlays/standard/4K.png path
+    if (this.config.overlayAssetsHostPath) {
+      binds.push(`${this.config.overlayAssetsHostPath}:/overlay-assets:ro`);
     }
 
     return binds;
