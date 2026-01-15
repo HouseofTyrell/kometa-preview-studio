@@ -599,6 +599,18 @@ def download_asset(asset_path: str, use_cdn: bool = True) -> Optional[bytes]:
     if asset_path in _asset_cache:
         return _asset_cache[asset_path]
 
+    # Check local overlay-assets directory first (pre-downloaded assets)
+    local_assets_dir = Path("/overlay-assets")
+    if local_assets_dir.exists():
+        local_asset_path = local_assets_dir / asset_path
+        if local_asset_path.exists():
+            try:
+                data = local_asset_path.read_bytes()
+                _asset_cache[asset_path] = data
+                return data
+            except Exception as e:
+                print(f"Warning: Failed to read local asset {local_asset_path}: {e}")
+
     # Check local disk cache (only if cache is valid)
     cache_path = get_cache_path(asset_path)
     if cache_path.exists() and is_cache_valid():
