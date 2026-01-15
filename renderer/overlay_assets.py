@@ -24,6 +24,7 @@ from pathlib import Path
 from typing import Optional, Dict, Any
 from urllib.request import urlopen, Request
 from urllib.error import URLError, HTTPError
+from urllib.parse import unquote
 import json
 
 # Base URL for Kometa Default-Images raw files (using jsDelivr CDN for reliability)
@@ -202,19 +203,19 @@ NETWORK_ASSETS = {
     "nba_tv": "network/logos/nba%20tv.png",
     "mlb_network": "network/logos/mlb%20network.png",
     # Streaming Networks (when used as production source)
-    "netflix": "network/logos/netflix.png",
-    "amazon": "network/logos/amazon.png",
-    "prime_video": "network/logos/amazon.png",
-    "disney+": "network/logos/disney%2B.png",
-    "disney": "network/logos/disney%2B.png",
-    "hulu": "network/logos/hulu.png",
-    "apple_tv+": "network/logos/apple%20tv%2B.png",
-    "apple_tv": "network/logos/apple%20tv%2B.png",
-    "appletv": "network/logos/apple%20tv%2B.png",
-    "paramount+": "network/logos/paramount%2B.png",
-    "paramount": "network/logos/paramount%2B.png",
-    "peacock": "network/logos/peacock.png",
-    "max": "network/logos/max.png",
+    "netflix": "network/logos/Netflix.png",
+    "amazon": "network/logos/Amazon.png",
+    "prime_video": "network/logos/Amazon.png",
+    "disney+": "network/logos/Disney+.png",
+    "disney": "network/logos/Disney+.png",
+    "hulu": "network/logos/Hulu.png",
+    "apple_tv+": "network/logos/Apple TV+.png",
+    "apple_tv": "network/logos/Apple TV+.png",
+    "appletv": "network/logos/Apple TV+.png",
+    "paramount+": "network/logos/Paramount+.png",
+    "paramount": "network/logos/Paramount+.png",
+    "peacock": "network/logos/Peacock.png",
+    "max": "network/logos/Max.png",
     # UK Networks
     "bbc_one": "network/logos/bbc%20one.png",
     "bbc_two": "network/logos/bbc%20two.png",
@@ -314,7 +315,7 @@ STUDIO_ASSETS = {
     "tristar": "studio/logos/tristar%20pictures.png",
     "new line cinema": "studio/logos/new%20line%20cinema.png",
     "new line": "studio/logos/new%20line%20cinema.png",
-    "miramax": "studio/logos/miramax.png",
+    "miramax": "studio/logos/Miramax.png",
     "focus features": "studio/logos/focus%20features.png",
     "focus": "studio/logos/focus%20features.png",
     "searchlight pictures": "studio/logos/searchlight%20pictures.png",
@@ -328,7 +329,7 @@ STUDIO_ASSETS = {
     "amazon studios": "studio/logos/amazon%20studios.png",
     "apple studios": "studio/logos/apple%20studios.png",
     "apple tv+": "studio/logos/apple%20studios.png",
-    "netflix": "studio/logos/netflix.png",
+    "netflix": "studio/logos/Netflix.png",
     # Horror/Genre
     "blumhouse": "studio/logos/blumhouse.png",
     "blumhouse productions": "studio/logos/blumhouse.png",
@@ -577,10 +578,13 @@ def download_asset(asset_path: str, use_cdn: bool = True) -> Optional[bytes]:
     if asset_path in _asset_cache:
         return _asset_cache[asset_path]
 
+    # URL-decode the path for filesystem lookups (files use real spaces/plus signs, not %20/%2B)
+    decoded_path = unquote(asset_path)
+
     # Check committed assets directory first (shipped with repo)
     repo_assets_dir = Path("/app/assets")
     if repo_assets_dir.exists():
-        repo_asset_path = repo_assets_dir / asset_path
+        repo_asset_path = repo_assets_dir / decoded_path
         if repo_asset_path.exists():
             try:
                 data = repo_asset_path.read_bytes()
@@ -592,7 +596,7 @@ def download_asset(asset_path: str, use_cdn: bool = True) -> Optional[bytes]:
     # Check local overlay-assets directory (user-downloaded assets)
     local_assets_dir = Path("/overlay-assets")
     if local_assets_dir.exists():
-        local_asset_path = local_assets_dir / asset_path
+        local_asset_path = local_assets_dir / decoded_path
         if local_asset_path.exists():
             try:
                 data = local_asset_path.read_bytes()
@@ -762,37 +766,26 @@ def preload_common_assets(force_refresh: bool = False):
             print("Cache was stale, refreshed")
 
     common_assets = [
-        # Resolution
-        "resolution/resolution/4k.png",
-        "resolution/resolution/1080p.png",
-        "resolution/resolution/720p.png",
-        "resolution/resolution/hdr.png",
-        "resolution/resolution/dolby%20vision.png",
-        # Audio
-        "audio_codec/audio_codec/dolby%20atmos.png",
-        "audio_codec/audio_codec/dts-hd%20ma.png",
-        "audio_codec/audio_codec/truehd.png",
-        # Ribbons
-        "ribbon/ribbon/imdb%20top%20250.png",
-        "ribbon/ribbon/rotten%20tomatoes%20certified%20fresh.png",
-        # Common streaming
-        "streaming/logos/netflix.png",
-        "streaming/logos/max.png",
-        "streaming/logos/disney%2B.png",
-        "streaming/logos/amazon%20prime%20video.png",
-        "streaming/logos/apple%20tv%2B.png",
-        # Common networks
-        "network/logos/amc.png",
-        "network/logos/hbo.png",
-        "network/logos/fx.png",
-        "network/logos/netflix.png",
-        # Common studios
-        "studio/logos/a24.png",
-        "studio/logos/marvel%20studios.png",
-        "studio/logos/netflix.png",
-        # Ratings sources
-        "ratings/ratings/imdb.png",
-        "ratings/ratings/tmdb.png",
+        # Resolution (uses correct paths and proper capitalization)
+        "resolution/overlays/standard/4K.png",
+        "resolution/overlays/standard/1080p.png",
+        "resolution/overlays/standard/720p.png",
+        # Audio, HDR, Ribbons, and Ratings are dynamically generated - no PNG assets
+        # Common streaming (proper capitalization and spaces, not URL encoded)
+        "streaming/logos/Netflix.png",
+        "streaming/logos/Max.png",
+        "streaming/logos/Disney+.png",
+        "streaming/logos/Prime Video.png",
+        "streaming/logos/Apple TV+.png",
+        # Common networks (proper capitalization)
+        "network/logos/AMC.png",
+        "network/logos/HBO.png",
+        "network/logos/FX.png",
+        "network/logos/Netflix.png",
+        # Common studios (proper capitalization)
+        "studio/logos/A24.png",
+        "studio/logos/Marvel Studios.png",
+        "studio/logos/Netflix.png",
     ]
 
     loaded = 0
