@@ -110,7 +110,7 @@ export const PREVIEW_TARGETS: PreviewTarget[] = [
       tmdbRating: 8.9,
       rtRating: 96,
       status: 'ended',
-      ribbon: 'imdb_top_250',
+      ribbon: 'rt_certified_fresh',  // 96% RT - show variety by using different ribbon
     },
   },
   {

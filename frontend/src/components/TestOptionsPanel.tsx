@@ -94,7 +94,7 @@ function TestOptionsPanel({
           studio: true,
           ratings: true,
           status: true,
-          ribbon: { imdbTop250: true, imdbLowest: false, rtCertifiedFresh: false },
+          ribbon: { imdbTop250: true, imdbLowest: false, rtCertifiedFresh: true },
         },
       })
     }
