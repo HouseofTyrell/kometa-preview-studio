@@ -278,12 +278,8 @@ export class KometaRunner extends EventEmitter {
       binds.push(`${this.config.cacheHostPath}:/jobs/config/cache:rw`);
     }
 
-    // Overlay assets directory for Kometa default overlay images (read-only)
-    // This contains workaround for Kometa v2.2.2 bug where it looks for resolution/resolution/4k.png
-    // instead of the correct resolution/overlays/standard/4K.png path
-    if (this.config.overlayAssetsHostPath) {
-      binds.push(`${this.config.overlayAssetsHostPath}:/overlay-assets:ro`);
-    }
+    // Note: Overlay assets are now bundled in the renderer image at /app/assets
+    // No need for external volume mount
 
     return binds;
   }

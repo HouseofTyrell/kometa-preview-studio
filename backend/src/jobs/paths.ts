@@ -91,7 +91,10 @@ export function getCacheHostPath(): string | undefined {
 /**
  * Get the HOST path for overlay assets directory (for Docker volume mounts)
  * This contains Kometa default overlay images (resolution, etc.)
+ *
+ * @deprecated Assets are now bundled in the Docker image at /app/assets
+ * No external volume mount needed.
  */
 export function getOverlayAssetsHostPath(): string | undefined {
-  return process.env.OVERLAY_ASSETS_HOST_PATH;
+  return undefined; // Assets bundled in image at /app/assets
 }

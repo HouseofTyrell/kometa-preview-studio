@@ -268,14 +268,16 @@ function injectLocalOverlayAssets(
 ): Array<string | Record<string, unknown>> {
   // Only resolution overlays use downloaded PNG files
   // Other overlays (audio_codec, ratings, etc.) are dynamically generated
+  // Note: Assets are bundled in renderer image at /app/assets
   const overlayAssetMappings: Record<string, Record<string, string>> = {
     resolution: {
-      file_4k: '/overlay-assets/resolution/resolution/4k.png',
-      file_1080p: '/overlay-assets/resolution/resolution/1080p.png',
-      file_720p: '/overlay-assets/resolution/resolution/720p.png',
-      file_480p: '/overlay-assets/resolution/resolution/480p.png',
-      file_fullhd: '/overlay-assets/resolution/resolution/fullhd.png',
-      file_ultrahd: '/overlay-assets/resolution/resolution/ultrahd.png',
+      file_4k: '/app/assets/resolution/overlays/standard/4K.png',
+      file_1080p: '/app/assets/resolution/overlays/standard/1080p.png',
+      file_720p: '/app/assets/resolution/overlays/standard/720p.png',
+      file_480p: '/app/assets/resolution/overlays/standard/480p.png',
+      // Note: fullhd and ultrahd variants don't exist in Default-Images
+      file_fullhd: '/app/assets/resolution/overlays/standard/1080p.png',
+      file_ultrahd: '/app/assets/resolution/overlays/standard/4K.png',
     },
   };
 

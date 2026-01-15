@@ -581,29 +581,17 @@ def download_asset(asset_path: str, use_cdn: bool = True) -> Optional[bytes]:
     # URL-decode the path for filesystem lookups (files use real spaces/plus signs, not %20/%2B)
     decoded_path = unquote(asset_path)
 
-    # Check committed assets directory first (shipped with repo)
-    repo_assets_dir = Path("/app/assets")
-    if repo_assets_dir.exists():
-        repo_asset_path = repo_assets_dir / decoded_path
-        if repo_asset_path.exists():
+    # Check bundled assets directory (shipped with Docker image at /app/assets)
+    assets_dir = Path("/app/assets")
+    if assets_dir.exists():
+        asset_file = assets_dir / decoded_path
+        if asset_file.exists():
             try:
-                data = repo_asset_path.read_bytes()
+                data = asset_file.read_bytes()
                 _asset_cache[asset_path] = data
                 return data
             except Exception as e:
-                print(f"Warning: Failed to read repo asset {repo_asset_path}: {e}")
-
-    # Check local overlay-assets directory (user-downloaded assets)
-    local_assets_dir = Path("/overlay-assets")
-    if local_assets_dir.exists():
-        local_asset_path = local_assets_dir / decoded_path
-        if local_asset_path.exists():
-            try:
-                data = local_asset_path.read_bytes()
-                _asset_cache[asset_path] = data
-                return data
-            except Exception as e:
-                print(f"Warning: Failed to read local asset {local_asset_path}: {e}")
+                print(f"Warning: Failed to read asset {asset_file}: {e}")
 
     # Check local disk cache (only if cache is valid)
     cache_path = get_cache_path(asset_path)
