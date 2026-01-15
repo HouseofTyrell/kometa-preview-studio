@@ -79,8 +79,8 @@ function TestOptionsPanel({
       // Disable manual mode
       onChange({ ...options, manualBuilderConfig: undefined })
     } else {
-      // Enable manual mode with implemented overlays on by default
-      // Note: Only includes overlays that instant_compositor actually supports
+      // Enable manual mode with common overlays on by default
+      // Uses Kometa's Default-Images PNG assets for production-quality previews
       onChange({
         ...options,
         manualBuilderConfig: {
@@ -89,6 +89,10 @@ function TestOptionsPanel({
           resolution: true,
           audioCodec: true,
           hdr: true,
+          streaming: true,
+          network: true,
+          studio: true,
+          ratings: true,
           status: true,
           ribbon: { imdbTop250: true, imdbLowest: false, rtCertifiedFresh: false },
         },
@@ -228,7 +232,7 @@ function TestOptionsPanel({
               </label>
             </div>
             <p className="section-hint">
-              Skip external API calls (IMDb, TMDb, Trakt). Uses hardcoded metadata for instant previews.
+              Skip external API calls (IMDb, TMDb, Trakt). Uses Kometa's PNG overlay assets for production-quality instant previews.
             </p>
 
             {options.manualBuilderConfig?.enabled && (
@@ -265,6 +269,50 @@ function TestOptionsPanel({
                 </div>
 
                 <div className="overlay-group">
+                  <h5 className="group-title">Streaming & Providers</h5>
+                  <label className="checkbox-item">
+                    <input
+                      type="checkbox"
+                      checked={options.manualBuilderConfig?.streaming ?? false}
+                      onChange={() => handleManualOverlayToggle('streaming')}
+                      disabled={disabled}
+                    />
+                    <span>Streaming Services (Netflix, Max)</span>
+                  </label>
+                  <label className="checkbox-item">
+                    <input
+                      type="checkbox"
+                      checked={options.manualBuilderConfig?.network ?? false}
+                      onChange={() => handleManualOverlayToggle('network')}
+                      disabled={disabled}
+                    />
+                    <span>TV Network (AMC, HBO)</span>
+                  </label>
+                  <label className="checkbox-item">
+                    <input
+                      type="checkbox"
+                      checked={options.manualBuilderConfig?.studio ?? false}
+                      onChange={() => handleManualOverlayToggle('studio')}
+                      disabled={disabled}
+                    />
+                    <span>Studio (Warner Bros., Legendary)</span>
+                  </label>
+                </div>
+
+                <div className="overlay-group">
+                  <h5 className="group-title">Ratings</h5>
+                  <label className="checkbox-item">
+                    <input
+                      type="checkbox"
+                      checked={options.manualBuilderConfig?.ratings ?? false}
+                      onChange={() => handleManualOverlayToggle('ratings')}
+                      disabled={disabled}
+                    />
+                    <span>Ratings (IMDb, TMDb, RT)</span>
+                  </label>
+                </div>
+
+                <div className="overlay-group">
                   <h5 className="group-title">Awards & Ribbons</h5>
                   <label className="checkbox-item">
                     <input
@@ -274,6 +322,15 @@ function TestOptionsPanel({
                       disabled={disabled}
                     />
                     <span>IMDb Top 250</span>
+                  </label>
+                  <label className="checkbox-item">
+                    <input
+                      type="checkbox"
+                      checked={options.manualBuilderConfig?.ribbon?.rtCertifiedFresh ?? false}
+                      onChange={() => handleRibbonToggle('rtCertifiedFresh')}
+                      disabled={disabled}
+                    />
+                    <span>RT Certified Fresh</span>
                   </label>
                 </div>
 
