@@ -577,7 +577,19 @@ def download_asset(asset_path: str, use_cdn: bool = True) -> Optional[bytes]:
     if asset_path in _asset_cache:
         return _asset_cache[asset_path]
 
-    # Check local overlay-assets directory first (pre-downloaded assets)
+    # Check committed assets directory first (shipped with repo)
+    repo_assets_dir = Path("/app/assets")
+    if repo_assets_dir.exists():
+        repo_asset_path = repo_assets_dir / asset_path
+        if repo_asset_path.exists():
+            try:
+                data = repo_asset_path.read_bytes()
+                _asset_cache[asset_path] = data
+                return data
+            except Exception as e:
+                print(f"Warning: Failed to read repo asset {repo_asset_path}: {e}")
+
+    # Check local overlay-assets directory (user-downloaded assets)
     local_assets_dir = Path("/overlay-assets")
     if local_assets_dir.exists():
         local_asset_path = local_assets_dir / asset_path
