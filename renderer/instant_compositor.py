@@ -302,32 +302,92 @@ def create_status_badge(status: str) -> Image.Image:
 
 
 def create_ribbon(ribbon_type: str) -> Optional[Image.Image]:
-    """Create a corner ribbon overlay."""
+    """
+    Create a corner ribbon overlay for bottom-right positioning.
+
+    Kometa's default ribbon position is bottom-right corner.
+    The ribbon diagonal goes from top-left of the ribbon image
+    toward bottom-right, creating a "fold" effect in the corner.
+    """
     # Try to load PNG asset first
     if HAS_OVERLAY_ASSETS:
         asset_data = get_ribbon_asset(ribbon_type)
         if asset_data:
             return load_png_overlay(asset_data, max_width=300, max_height=300)
 
-    # Fallback to simple text ribbon
-    if ribbon_type == 'imdb_top_250':
-        ribbon = Image.new('RGBA', (200, 200), (0, 0, 0, 0))
-        draw = ImageDraw.Draw(ribbon)
+    # Ribbon configurations for different types
+    ribbon_configs = {
+        'imdb_top_250': {
+            'color': (245, 197, 24, 240),  # IMDb gold
+            'text': 'IMDb\nTOP 250',
+            'text_color': '#000000',
+        },
+        'imdb_lowest': {
+            'color': (139, 0, 0, 240),  # Dark red
+            'text': 'IMDb\nLOWEST',
+            'text_color': '#FFFFFF',
+        },
+        'rt_certified_fresh': {
+            'color': (250, 50, 10, 240),  # RT red
+            'text': 'CERTIFIED\nFRESH',
+            'text_color': '#FFFFFF',
+        },
+        'common_sense': {
+            'color': (0, 166, 81, 240),  # Green
+            'text': 'COMMON\nSENSE',
+            'text_color': '#FFFFFF',
+        },
+    }
 
-        # Draw diagonal ribbon
-        draw.polygon([(0, 0), (200, 0), (200, 50), (50, 200), (0, 200)], fill=(255, 215, 0, 230))
+    config = ribbon_configs.get(ribbon_type)
+    if not config:
+        return None
 
-        # Add text rotated 45 degrees - simplified version
-        try:
-            font = ImageFont.load_default()
-            draw.text((60, 20), "TOP", fill='#000000', font=font)
-            draw.text((90, 35), "250", fill='#000000', font=font)
-        except Exception:
-            pass
+    # Create ribbon image (designed for bottom-right corner placement)
+    size = 200
+    ribbon = Image.new('RGBA', (size, size), (0, 0, 0, 0))
+    draw = ImageDraw.Draw(ribbon)
 
-        return ribbon
+    # Draw diagonal ribbon band - goes from top-left corner to bottom-right
+    # This creates a triangular ribbon that "wraps" around the bottom-right corner
+    band_width = 50
+    # Points for a diagonal band from top-left to bottom-right of the square
+    points = [
+        (0, size - band_width * 2),  # Left edge, upper point
+        (band_width * 2, size),       # Bottom edge, left point
+        (size, size),                 # Bottom-right corner
+        (size, size - band_width * 2), # Right edge
+        (size - band_width * 2, 0),   # Top edge, right point
+        (0, 0),                       # Top-left corner (optional for full triangle)
+    ]
+    # Simplified diagonal band
+    band_points = [
+        (0, size - band_width * 2.5),
+        (0, size),
+        (size, size),
+        (size, 0),
+        (size - band_width * 2.5, 0),
+    ]
+    draw.polygon(band_points, fill=config['color'])
 
-    return None
+    # Add text along the diagonal
+    try:
+        font = _get_cached_font(18)
+        text_lines = config['text'].split('\n')
+
+        # Position text along the diagonal (rotated -45 degrees conceptually)
+        # Since we can't easily rotate text, position it to fit the diagonal
+        if len(text_lines) == 2:
+            # First line - upper part of diagonal
+            draw.text((size - 85, 25), text_lines[0], fill=config['text_color'], font=font)
+            # Second line - lower part
+            draw.text((size - 65, 45), text_lines[1], fill=config['text_color'], font=font)
+        else:
+            draw.text((size - 80, 35), config['text'], fill=config['text_color'], font=font)
+    except Exception:
+        pass
+
+    return ribbon
 
 
 # ============================================================================
