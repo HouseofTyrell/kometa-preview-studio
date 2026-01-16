@@ -1,4 +1,4 @@
-import { useState, useMemo, useEffect } from 'react'
+import { useState, useMemo, useEffect, useCallback } from 'react'
 import MediaSelector from '../components/builder/MediaSelector'
 import LivePreview from '../components/builder/LivePreview'
 import OverlayCheckboxGrid from '../components/builder/OverlayCheckboxGrid'
@@ -7,6 +7,7 @@ import AdvancedConfigurator from '../components/builder/AdvancedConfigurator'
 import DefaultsLibrary from '../components/builder/DefaultsLibrary'
 import CommunityBrowser from '../components/builder/CommunityBrowser'
 import ShareDialog from '../components/builder/ShareDialog'
+import YamlEditor from '../components/YamlEditor'
 import { PREVIEW_TARGETS } from '../constants/previewTargets'
 import type { OverlayConfig, QueueConfig } from '../types/overlayConfig'
 import type { PMMOverlayDefault } from '../constants/pmmDefaults'
@@ -18,9 +19,15 @@ import {
   saveBuilderOverlays,
   getBuilderOverlays,
   parseCommunityOverlays,
+  validateYaml,
+  parseYamlOverlays,
 } from '../api/client'
 import type { TestOptions, ManualBuilderConfig } from '../types/testOptions'
-import { generateOverlayYaml } from '../utils/overlayYamlGenerator'
+import {
+  generateOverlayYaml,
+  generateFullKometaConfig,
+  generateSimplePmmOverlays,
+} from '../utils/overlayYamlGenerator'
 import './OverlayBuilder.css'
 
 interface OverlayBuilderPageProps {
@@ -36,7 +43,7 @@ interface OverlayBuilderPageProps {
   ) => void
 }
 
-type BuilderMode = 'simple' | 'advanced' | 'defaults' | 'community'
+type BuilderMode = 'simple' | 'advanced' | 'defaults' | 'community' | 'yaml'
 
 function OverlayBuilderPage({
   profileId,
@@ -54,6 +61,9 @@ function OverlayBuilderPage({
   const [errorMessage, setErrorMessage] = useState<string | null>(null)
   const [successMessage, setSuccessMessage] = useState<string | null>(null)
   const [showShareDialog, setShowShareDialog] = useState(false)
+  const [yamlContent, setYamlContent] = useState<string>('')
+  const [yamlError, setYamlError] = useState<string | null>(null)
+  const [isYamlSynced, setIsYamlSynced] = useState(true)
 
   // Auto-dismiss messages after 5 seconds
   useEffect(() => {
@@ -113,6 +123,30 @@ function OverlayBuilderPage({
 
     loadOverlaysFromConfig()
   }, [profileId])
+
+  // Generate YAML content when builder state changes
+  useEffect(() => {
+    if (mode !== 'yaml') {
+      // When not in YAML mode, regenerate the YAML from builder state
+      let generatedYaml = ''
+
+      if (mode === 'advanced' && advancedOverlays.length > 0) {
+        // Generate from advanced overlays
+        generatedYaml = generateFullKometaConfig(advancedOverlays, advancedQueues, {
+          libraryName: libraryNames[0] || 'Movies',
+          libraryType: 'movie',
+        })
+      } else if (Object.keys(enabledOverlays).some((key) => enabledOverlays[key])) {
+        // Generate from simple mode PMM overlays
+        generatedYaml = generateSimplePmmOverlays(enabledOverlays, selectedPreset || undefined)
+      }
+
+      if (generatedYaml) {
+        setYamlContent(generatedYaml)
+        setIsYamlSynced(true)
+      }
+    }
+  }, [mode, enabledOverlays, selectedPreset, advancedOverlays, advancedQueues, libraryNames])
 
   // Find the selected target object
   const selectedTargetObj = useMemo(() => {
@@ -440,6 +474,230 @@ libraries:
     }
   }
 
+  // Handle YAML content change from editor
+  const handleYamlChange = useCallback((newYaml: string) => {
+    setYamlContent(newYaml)
+    setIsYamlSynced(false) // Mark as out of sync with builder state
+  }, [])
+
+  // Handle YAML validation result
+  const handleYamlValidate = useCallback((_isValid: boolean, error: string | null) => {
+    setYamlError(error)
+  }, [])
+
+  // Import YAML and update builder state
+  const handleImportYaml = async () => {
+    const input = document.createElement('input')
+    input.type = 'file'
+    input.accept = '.yml,.yaml'
+    input.onchange = async (e) => {
+      const file = (e.target as HTMLInputElement).files?.[0]
+      if (!file) return
+
+      try {
+        const text = await file.text()
+
+        // Validate YAML first
+        const validation = await validateYaml(text)
+        if (!validation.valid) {
+          setErrorMessage(`Invalid YAML: ${validation.error}`)
+          return
+        }
+
+        // Parse overlays from the YAML
+        const parsed = await parseYamlOverlays(text)
+
+        // Update YAML content
+        setYamlContent(text)
+        setYamlError(null)
+
+        // Try to sync builder state based on parsed content
+        if (parsed.type === 'overlay_file' && parsed.overlayNames) {
+          // Map overlay names to builder state
+          const newEnabledOverlays: Record<string, boolean> = {}
+          const overlayMap: Record<string, string> = {
+            resolution: 'resolution',
+            audio_codec: 'audio_codec',
+            video_format: 'hdr',
+            streaming: 'streaming',
+            network: 'network',
+            studio: 'studio',
+            ratings: 'ratings',
+            ribbon: 'imdb_top250',
+            status: 'status',
+          }
+
+          for (const overlayName of parsed.overlayNames) {
+            const overlayLower = overlayName.toLowerCase()
+            for (const [pmmName, builderKey] of Object.entries(overlayMap)) {
+              if (overlayLower.includes(pmmName)) {
+                newEnabledOverlays[builderKey] = true
+              }
+            }
+          }
+
+          if (Object.keys(newEnabledOverlays).length > 0) {
+            setEnabledOverlays(newEnabledOverlays)
+          }
+
+          setSuccessMessage(
+            `Imported overlay file with ${parsed.overlayCount} overlays!`
+          )
+        } else if (parsed.type === 'kometa_config' && parsed.overlaysByLibrary) {
+          // Parse overlays from Kometa config
+          let overlayCount = 0
+          const newEnabledOverlays: Record<string, boolean> = {}
+
+          for (const overlays of Object.values(parsed.overlaysByLibrary)) {
+            if (Array.isArray(overlays)) {
+              for (const overlay of overlays) {
+                const overlayStr = String(overlay).toLowerCase()
+                overlayCount++
+
+                // Map PMM overlays to builder state
+                if (overlayStr.includes('resolution')) newEnabledOverlays['resolution'] = true
+                if (overlayStr.includes('audio_codec')) newEnabledOverlays['audio_codec'] = true
+                if (overlayStr.includes('video_format') || overlayStr.includes('hdr')) newEnabledOverlays['hdr'] = true
+                if (overlayStr.includes('streaming')) newEnabledOverlays['streaming'] = true
+                if (overlayStr.includes('network')) newEnabledOverlays['network'] = true
+                if (overlayStr.includes('studio')) newEnabledOverlays['studio'] = true
+                if (overlayStr.includes('ratings')) newEnabledOverlays['ratings'] = true
+                if (overlayStr.includes('ribbon')) {
+                  newEnabledOverlays['imdb_top250'] = true
+                  newEnabledOverlays['rt_certified'] = true
+                }
+                if (overlayStr.includes('status')) newEnabledOverlays['status'] = true
+              }
+            }
+          }
+
+          if (Object.keys(newEnabledOverlays).length > 0) {
+            setEnabledOverlays(newEnabledOverlays)
+          }
+
+          setSuccessMessage(
+            `Imported Kometa config with ${parsed.libraryCount} libraries and ${overlayCount} overlay references!`
+          )
+        } else {
+          setSuccessMessage('YAML loaded! Could not auto-detect overlay settings.')
+        }
+
+        setIsYamlSynced(true)
+        setMode('yaml') // Switch to YAML mode to view
+      } catch (error) {
+        console.error('Import YAML failed:', error)
+        setErrorMessage(`Import failed: ${error instanceof Error ? error.message : 'Unknown error'}`)
+      }
+    }
+    input.click()
+  }
+
+  // Sync YAML changes back to builder state
+  const handleSyncYamlToBuilder = async () => {
+    if (!yamlContent) {
+      setErrorMessage('No YAML content to sync')
+      return
+    }
+
+    try {
+      // Validate first
+      const validation = await validateYaml(yamlContent)
+      if (!validation.valid) {
+        setErrorMessage(`Cannot sync invalid YAML: ${validation.error}`)
+        return
+      }
+
+      // Parse and update builder state
+      const parsed = await parseYamlOverlays(yamlContent)
+
+      if (parsed.type === 'overlay_file' && parsed.overlayNames) {
+        const newEnabledOverlays: Record<string, boolean> = {}
+        const overlayMap: Record<string, string> = {
+          resolution: 'resolution',
+          audio_codec: 'audio_codec',
+          video_format: 'hdr',
+          streaming: 'streaming',
+          network: 'network',
+          studio: 'studio',
+          ratings: 'ratings',
+          ribbon: 'imdb_top250',
+          status: 'status',
+        }
+
+        for (const overlayName of parsed.overlayNames) {
+          const overlayLower = overlayName.toLowerCase()
+          for (const [pmmName, builderKey] of Object.entries(overlayMap)) {
+            if (overlayLower.includes(pmmName)) {
+              newEnabledOverlays[builderKey] = true
+            }
+          }
+        }
+
+        setEnabledOverlays(newEnabledOverlays)
+        setIsYamlSynced(true)
+        setSuccessMessage('Builder state synced from YAML!')
+      } else if (parsed.type === 'kometa_config') {
+        // Handle full Kometa config
+        const newEnabledOverlays: Record<string, boolean> = {}
+
+        if (parsed.overlaysByLibrary) {
+          for (const overlays of Object.values(parsed.overlaysByLibrary)) {
+            if (Array.isArray(overlays)) {
+              for (const overlay of overlays) {
+                const overlayStr = String(overlay).toLowerCase()
+                if (overlayStr.includes('resolution')) newEnabledOverlays['resolution'] = true
+                if (overlayStr.includes('audio_codec')) newEnabledOverlays['audio_codec'] = true
+                if (overlayStr.includes('video_format') || overlayStr.includes('hdr')) newEnabledOverlays['hdr'] = true
+                if (overlayStr.includes('streaming')) newEnabledOverlays['streaming'] = true
+                if (overlayStr.includes('network')) newEnabledOverlays['network'] = true
+                if (overlayStr.includes('studio')) newEnabledOverlays['studio'] = true
+                if (overlayStr.includes('ratings')) newEnabledOverlays['ratings'] = true
+                if (overlayStr.includes('ribbon')) newEnabledOverlays['imdb_top250'] = true
+                if (overlayStr.includes('status')) newEnabledOverlays['status'] = true
+              }
+            }
+          }
+        }
+
+        setEnabledOverlays(newEnabledOverlays)
+        setIsYamlSynced(true)
+        setSuccessMessage('Builder state synced from YAML!')
+      } else {
+        setErrorMessage('Could not parse overlay information from YAML')
+      }
+    } catch (error) {
+      console.error('Sync failed:', error)
+      setErrorMessage(`Sync failed: ${error instanceof Error ? error.message : 'Unknown error'}`)
+    }
+  }
+
+  // Create new empty config
+  const handleNewConfig = () => {
+    const template = `# Kometa Overlay Configuration
+# Generated by Kometa Preview Studio
+# ${new Date().toISOString()}
+
+overlays:
+  # Add your overlay configurations here
+  # Example:
+  # my_overlay:
+  #   pmm: resolution
+  #   overlay:
+  #     horizontal_align: left
+  #     vertical_align: top
+  #     horizontal_offset: 15
+  #     vertical_offset: 15
+`
+    setYamlContent(template)
+    setYamlError(null)
+    setIsYamlSynced(true)
+    setEnabledOverlays({})
+    setAdvancedOverlays([])
+    setAdvancedQueues([])
+    setMode('yaml')
+    setSuccessMessage('New config created! Edit the YAML to configure your overlays.')
+  }
+
   const handleImportCommunityConfig = async (
     config: string,
     metadata: { username: string; filename: string; url: string }
@@ -565,6 +823,12 @@ libraries:
           >
             Advanced
           </button>
+          <button
+            className={`mode-button ${mode === 'yaml' ? 'active' : ''}`}
+            onClick={() => setMode('yaml')}
+          >
+            YAML
+          </button>
         </div>
       </div>
 
@@ -644,6 +908,52 @@ libraries:
             ) : mode === 'community' ? (
               <div className="community-mode">
                 <CommunityBrowser onImportConfig={handleImportCommunityConfig} />
+              </div>
+            ) : mode === 'yaml' ? (
+              <div className="yaml-mode">
+                <div className="yaml-mode-toolbar">
+                  <button
+                    className="yaml-toolbar-btn"
+                    onClick={handleNewConfig}
+                    title="Create a new blank overlay configuration"
+                  >
+                    New Config
+                  </button>
+                  <button
+                    className="yaml-toolbar-btn"
+                    onClick={handleImportYaml}
+                    title="Import a YAML file"
+                  >
+                    Import YAML
+                  </button>
+                  {!isYamlSynced && (
+                    <button
+                      className="yaml-toolbar-btn sync"
+                      onClick={handleSyncYamlToBuilder}
+                      disabled={!!yamlError}
+                      title="Apply YAML changes to builder state"
+                    >
+                      Sync to Builder
+                    </button>
+                  )}
+                </div>
+                <YamlEditor
+                  value={yamlContent}
+                  onChange={handleYamlChange}
+                  onValidate={handleYamlValidate}
+                  height="500px"
+                  placeholder="# Enter your Kometa overlay configuration here...
+# Or use the buttons above to create a new config or import an existing YAML file.
+
+overlays:
+  my_overlay:
+    pmm: resolution"
+                />
+                {!isYamlSynced && !yamlError && (
+                  <div className="yaml-sync-warning">
+                    YAML has been modified. Click &quot;Sync to Builder&quot; to apply changes.
+                  </div>
+                )}
               </div>
             ) : (
               <div className="advanced-mode">

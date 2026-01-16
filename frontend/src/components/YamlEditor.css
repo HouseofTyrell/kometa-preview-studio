@@ -1,0 +1,182 @@
+/**
+ * YAML Editor Styles
+ */
+
+.yaml-editor {
+  display: flex;
+  flex-direction: column;
+  border: 1px solid var(--border-color, #333);
+  border-radius: 8px;
+  overflow: hidden;
+  background: var(--bg-secondary, #1a1a1a);
+}
+
+.yaml-editor-toolbar {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 8px 12px;
+  background: var(--bg-tertiary, #252525);
+  border-bottom: 1px solid var(--border-color, #333);
+}
+
+.yaml-editor-status {
+  font-size: 13px;
+}
+
+.yaml-editor-error {
+  color: var(--color-error, #ff6b6b);
+}
+
+.yaml-editor-valid {
+  color: var(--color-success, #4ade80);
+}
+
+.yaml-editor-empty {
+  color: var(--text-muted, #666);
+}
+
+.yaml-editor-actions {
+  display: flex;
+  gap: 8px;
+}
+
+.yaml-editor-btn {
+  padding: 4px 12px;
+  background: var(--bg-primary, #0a0a0a);
+  border: 1px solid var(--border-color, #333);
+  border-radius: 4px;
+  color: var(--text-primary, #fff);
+  font-size: 13px;
+  cursor: pointer;
+  transition: background 0.2s, border-color 0.2s;
+}
+
+.yaml-editor-btn:hover:not(:disabled) {
+  background: var(--bg-hover, #2a2a2a);
+  border-color: var(--border-hover, #444);
+}
+
+.yaml-editor-btn:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.yaml-editor-container {
+  display: flex;
+  overflow: hidden;
+  position: relative;
+}
+
+.yaml-editor-line-numbers {
+  flex-shrink: 0;
+  width: 48px;
+  padding: 12px 8px;
+  background: var(--bg-tertiary, #252525);
+  border-right: 1px solid var(--border-color, #333);
+  overflow-y: hidden;
+  text-align: right;
+  user-select: none;
+}
+
+.yaml-editor-line-number {
+  font-family: 'Fira Code', 'Consolas', 'Monaco', monospace;
+  font-size: 13px;
+  line-height: 1.6;
+  color: var(--text-muted, #666);
+  height: 20.8px;
+}
+
+.yaml-editor-line-number.error {
+  color: var(--color-error, #ff6b6b);
+  font-weight: bold;
+}
+
+.yaml-editor-textarea {
+  flex: 1;
+  padding: 12px;
+  background: var(--bg-secondary, #1a1a1a);
+  border: none;
+  outline: none;
+  color: var(--text-primary, #fff);
+  font-family: 'Fira Code', 'Consolas', 'Monaco', monospace;
+  font-size: 13px;
+  line-height: 1.6;
+  resize: none;
+  overflow-y: auto;
+  white-space: pre;
+  tab-size: 2;
+}
+
+.yaml-editor-textarea::placeholder {
+  color: var(--text-muted, #666);
+}
+
+.yaml-editor-textarea.has-error {
+  border-left: 3px solid var(--color-error, #ff6b6b);
+}
+
+.yaml-editor-textarea:focus {
+  box-shadow: inset 0 0 0 1px var(--color-primary, #646cff);
+}
+
+/* Syntax highlighting placeholder - can be enhanced later */
+.yaml-editor-textarea::selection {
+  background: var(--color-primary-alpha, rgba(100, 108, 255, 0.3));
+}
+
+/* Scrollbar styling */
+.yaml-editor-textarea::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+
+.yaml-editor-textarea::-webkit-scrollbar-track {
+  background: var(--bg-tertiary, #252525);
+}
+
+.yaml-editor-textarea::-webkit-scrollbar-thumb {
+  background: var(--border-color, #333);
+  border-radius: 4px;
+}
+
+.yaml-editor-textarea::-webkit-scrollbar-thumb:hover {
+  background: var(--border-hover, #444);
+}
+
+/* Dark theme overrides (default) */
+:root {
+  --yaml-editor-bg: #1a1a1a;
+  --yaml-editor-border: #333;
+}
+
+/* Light theme overrides */
+[data-theme="light"] .yaml-editor {
+  background: #f8f9fa;
+  border-color: #dee2e6;
+}
+
+[data-theme="light"] .yaml-editor-toolbar {
+  background: #e9ecef;
+  border-color: #dee2e6;
+}
+
+[data-theme="light"] .yaml-editor-btn {
+  background: #fff;
+  border-color: #dee2e6;
+  color: #212529;
+}
+
+[data-theme="light"] .yaml-editor-btn:hover:not(:disabled) {
+  background: #e9ecef;
+}
+
+[data-theme="light"] .yaml-editor-line-numbers {
+  background: #e9ecef;
+  border-color: #dee2e6;
+}
+
+[data-theme="light"] .yaml-editor-textarea {
+  background: #f8f9fa;
+  color: #212529;
+}

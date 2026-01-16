@@ -779,3 +779,139 @@ export async function importFromGist(gistId: string): Promise<SharedConfigRespon
 
   return response.json();
 }
+
+// ============================================================================
+// YAML Editor API
+// ============================================================================
+
+export interface YamlValidationResult {
+  valid: boolean;
+  error?: string;
+  warnings?: string[];
+  libraries?: string[];
+}
+
+export interface YamlParseResult {
+  type: 'overlay_file' | 'kometa_config' | 'unknown';
+  overlayCount?: number;
+  overlayNames?: string[];
+  queueCount?: number;
+  queueNames?: string[];
+  overlays?: Record<string, unknown>;
+  queues?: Record<string, unknown>;
+  libraryCount?: number;
+  libraryNames?: string[];
+  overlaysByLibrary?: Record<string, unknown[]>;
+  hasPlexConfig?: boolean;
+  hasSettings?: boolean;
+  keys?: string[];
+}
+
+export interface YamlTemplateOptions {
+  plexUrl?: string;
+  plexToken?: string;
+  libraries?: Array<{ name: string; type: 'movie' | 'show' }>;
+  includeSettings?: boolean;
+  includeTmdb?: boolean;
+}
+
+/**
+ * Validate YAML syntax and Kometa structure
+ */
+export async function validateYaml(yaml: string): Promise<YamlValidationResult> {
+  const response = await fetch(`${API_BASE}/builder/yaml/validate`, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify({ yaml }),
+  });
+
+  if (!response.ok) {
+    const error = await response.json().catch(() => ({ error: 'Failed to validate YAML' }));
+    throw new Error(error.details || error.error || 'Failed to validate YAML');
+  }
+
+  return response.json();
+}
+
+/**
+ * Parse YAML and extract overlay definitions
+ */
+export async function parseYamlOverlays(yaml: string): Promise<YamlParseResult> {
+  const response = await fetch(`${API_BASE}/builder/yaml/parse-overlays`, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify({ yaml }),
+  });
+
+  if (!response.ok) {
+    const error = await response.json().catch(() => ({ error: 'Failed to parse YAML' }));
+    throw new Error(error.details || error.error || 'Failed to parse YAML');
+  }
+
+  return response.json();
+}
+
+/**
+ * Generate a Kometa config template
+ */
+export async function generateYamlTemplate(
+  options?: YamlTemplateOptions
+): Promise<{ yaml: string; libraryNames: string[] }> {
+  const response = await fetch(`${API_BASE}/builder/yaml/generate-template`, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify(options || {}),
+  });
+
+  if (!response.ok) {
+    const error = await response.json().catch(() => ({ error: 'Failed to generate template' }));
+    throw new Error(error.details || error.error || 'Failed to generate template');
+  }
+
+  return response.json();
+}
+
+/**
+ * Get a profile's raw YAML config
+ */
+export async function getProfileYaml(
+  profileId: string
+): Promise<{ profileId: string; yaml: string; updatedAt: string }> {
+  const response = await fetch(`${API_BASE}/builder/yaml/${profileId}`);
+
+  if (!response.ok) {
+    const error = await response.json().catch(() => ({ error: 'Failed to get YAML' }));
+    throw new Error(error.details || error.error || 'Failed to get YAML');
+  }
+
+  return response.json();
+}
+
+/**
+ * Update a profile's raw YAML config
+ */
+export async function updateProfileYaml(
+  profileId: string,
+  yaml: string
+): Promise<{ success: boolean; profileId: string; message: string }> {
+  const response = await fetch(`${API_BASE}/builder/yaml/${profileId}`, {
+    method: 'PUT',
+    headers: {
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify({ yaml }),
+  });
+
+  if (!response.ok) {
+    const error = await response.json().catch(() => ({ error: 'Failed to update YAML' }));
+    throw new Error(error.details || error.error || 'Failed to update YAML');
+  }
+
+  return response.json();
+}
