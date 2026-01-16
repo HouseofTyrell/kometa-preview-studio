@@ -229,12 +229,23 @@ Some hardcoded values should be in constants:
 
 ## Architecture Improvements
 
-### Shared Types Package
-Consider creating `packages/shared` with:
-- API request/response types
-- Job status enums
-- Preview target definitions
-- Test options types
+### ✅ Shared Types Package
+**Status:** RESOLVED
+**Resolution Date:** 2026-01-16
+
+Created `shared/types.ts` with:
+- Job status types (JobStatus, JobStatusValue, JobTarget)
+- Media types (MediaType, PreviewTarget)
+- Config types (ConfigAnalysis)
+- Artifact types (JobArtifacts, JobArtifactItem)
+- Event types (JobEvent)
+- System control types (SystemAction, SystemActionResult)
+- Test options types (TestOptions)
+- API response types (ApiError, PaginatedResponse)
+
+Usage:
+- Backend: `import { JobStatus } from '../shared/types.js'`
+- Frontend: `import { JobStatus } from '../../shared/types'`
 
 ### Repository Pattern
 Status:
