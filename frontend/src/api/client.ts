@@ -11,6 +11,7 @@ export interface ConfigAnalysis {
   libraryNames: string[];
   warnings: string[];
   overlayYaml: string;
+  expiresAt?: string;  // ISO timestamp when this profile will auto-expire
 }
 
 // Job status values - must match backend/src/constants.ts
@@ -397,10 +398,44 @@ export async function getJobLogs(jobId: string): Promise<string> {
 }
 
 /**
- * List all jobs
+ * Pagination parameters for job listing
  */
-export async function listJobs(): Promise<{ jobs: JobStatus[] }> {
-  const response = await fetch(`${API_BASE}/preview/jobs`);
+export interface JobListParams {
+  page?: number;
+  limit?: number;
+  status?: JobStatusValue;
+}
+
+/**
+ * Paginated job list response
+ */
+export interface PaginatedJobsResponse {
+  jobs: JobStatus[];
+  pagination: {
+    page: number;
+    limit: number;
+    total: number;
+    totalPages: number;
+    hasNextPage: boolean;
+    hasPrevPage: boolean;
+  };
+}
+
+/**
+ * List jobs with pagination support
+ * @param params - Optional pagination parameters (page, limit, status filter)
+ */
+export async function listJobs(params?: JobListParams): Promise<PaginatedJobsResponse> {
+  const searchParams = new URLSearchParams();
+
+  if (params?.page) searchParams.set('page', String(params.page));
+  if (params?.limit) searchParams.set('limit', String(params.limit));
+  if (params?.status) searchParams.set('status', params.status);
+
+  const queryString = searchParams.toString();
+  const url = `${API_BASE}/preview/jobs${queryString ? `?${queryString}` : ''}`;
+
+  const response = await fetch(url);
 
   if (!response.ok) {
     const error = await response.json();

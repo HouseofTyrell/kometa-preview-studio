@@ -1,6 +1,7 @@
 import * as path from 'path';
 import { EventEmitter } from 'events';
 import { v4 as uuidv4 } from 'uuid';
+import { Job } from 'bullmq';
 import { getJobPaths, getJobsBasePath, getJobsHostPath, getFontsPath, getFontsHostPath, getKometaRendererImage, getUserPaths, getCacheHostPath, getOverlayAssetsHostPath } from './paths.js';
 import { ensureDir, writeText, writeJson } from '../util/safeFs.js';
 import { KometaRunner, RunnerConfig, RunnerEvent } from '../kometa/runner.js';
@@ -14,6 +15,7 @@ import { TestOptions, DEFAULT_TEST_OPTIONS } from '../types/testOptions.js';
 import { JobRepository, JobMeta, JobTarget, JobStatus } from './jobRepository.js';
 import { ArtifactManager, JobArtifacts } from './artifactManager.js';
 import { jobLogger } from '../util/logger.js';
+import { QueueService, PreviewJobData, PreviewJobResult, getQueueService } from './queueService.js';
 
 // Re-export types for backwards compatibility
 export type { JobStatus, JobTarget, JobMeta } from './jobRepository.js';
@@ -26,11 +28,14 @@ export type { JobArtifacts } from './artifactManager.js';
  * - JobRepository: Job metadata persistence
  * - ArtifactManager: Artifact (image/log) retrieval
  * - KometaRunner: Container execution
+ * - QueueService: Optional BullMQ queue for job processing (production mode)
  */
 class JobManager extends EventEmitter {
   private runner: KometaRunner;
   private repository: JobRepository;
   private artifacts: ArtifactManager;
+  private queueService: QueueService | null = null;
+  private useQueue: boolean = false;
 
   constructor() {
     super();
@@ -57,6 +62,145 @@ class JobManager extends EventEmitter {
       this.emit(`job:${event.jobId}`, event);
       this.updateJobFromEvent(event.jobId, event);
     });
+  }
+
+  /**
+   * Initialize the BullMQ queue service for production job processing
+   * This enables persistent job queuing with Redis backend
+   *
+   * @returns true if queue was initialized, false if Redis is unavailable
+   */
+  async initializeQueue(): Promise<boolean> {
+    // Check if Redis is configured
+    const redisHost = process.env.REDIS_HOST;
+    if (!redisHost) {
+      jobLogger.info('REDIS_HOST not configured, running in direct mode (no queue)');
+      return false;
+    }
+
+    try {
+      this.queueService = getQueueService(this.repository);
+
+      // Set up the job processor
+      await this.queueService.initialize(async (job: Job<PreviewJobData>) => {
+        return this.processQueuedJob(job);
+      });
+
+      // Forward queue events
+      this.queueService.on('job:completed', (jobId: string, result: PreviewJobResult) => {
+        this.emit(`job:${jobId}`, {
+          type: 'complete',
+          timestamp: new Date(),
+          message: 'Preview rendering completed successfully',
+          data: { progress: 100, exitCode: result.exitCode },
+        });
+      });
+
+      this.queueService.on('job:failed', (jobId: string, error: Error) => {
+        this.emit(`job:${jobId}`, {
+          type: 'error',
+          timestamp: new Date(),
+          message: `Job failed: ${error.message}`,
+          data: { error: error.message },
+        });
+      });
+
+      this.queueService.on('job:active', (jobId: string) => {
+        this.emit(`job:${jobId}`, {
+          type: 'progress',
+          timestamp: new Date(),
+          message: 'Job started processing',
+          data: { progress: 5 },
+        });
+      });
+
+      this.useQueue = true;
+      jobLogger.info('Queue service initialized - running in queue mode');
+      return true;
+    } catch (error) {
+      jobLogger.warn({ err: error }, 'Failed to initialize queue service, falling back to direct mode');
+      this.queueService = null;
+      this.useQueue = false;
+      return false;
+    }
+  }
+
+  /**
+   * Process a job from the queue
+   * This is called by the BullMQ worker when a job is dequeued
+   */
+  private async processQueuedJob(job: Job<PreviewJobData>): Promise<PreviewJobResult> {
+    const { jobId, configYaml, targetId, selectedOverlays, manualBuilderConfig } = job.data;
+
+    const testOptions: TestOptions = {
+      ...DEFAULT_TEST_OPTIONS,
+      selectedTargets: targetId ? [targetId] : [],
+      selectedOverlays: selectedOverlays || [],
+      manualBuilderConfig,
+    };
+
+    try {
+      // Parse and process the job
+      const parseResult = parseYaml(configYaml);
+      if (parseResult.error || !parseResult.parsed) {
+        throw new Error(`Invalid config: ${parseResult.error}`);
+      }
+
+      const config = parseResult.parsed as KometaConfig;
+      const analysis = analyzeConfig(config);
+
+      // Process the job (reuses existing processJob logic)
+      await this.processJob(jobId, config, analysis, testOptions);
+
+      const meta = await this.repository.getJobMeta(jobId);
+      return {
+        jobId,
+        status: meta?.status === 'completed' ? 'completed' : 'failed',
+        exitCode: meta?.exitCode,
+        error: meta?.error,
+        completedAt: new Date().toISOString(),
+      };
+    } catch (error) {
+      const message = error instanceof Error ? error.message : 'Unknown error';
+      await this.updateJobStatus(jobId, 'failed', 0, message);
+      return {
+        jobId,
+        status: 'failed',
+        error: message,
+        completedAt: new Date().toISOString(),
+      };
+    }
+  }
+
+  /**
+   * Get queue statistics (if queue is enabled)
+   */
+  async getQueueStats(): Promise<{
+    enabled: boolean;
+    waiting?: number;
+    active?: number;
+    completed?: number;
+    failed?: number;
+    delayed?: number;
+    isPaused?: boolean;
+  }> {
+    if (!this.queueService || !this.useQueue) {
+      return { enabled: false };
+    }
+
+    const stats = await this.queueService.getQueueStats();
+    return { enabled: true, ...stats };
+  }
+
+  /**
+   * Shutdown the queue service gracefully
+   */
+  async shutdownQueue(): Promise<void> {
+    if (this.queueService) {
+      await this.queueService.shutdown();
+      this.queueService = null;
+      this.useQueue = false;
+    }
   }
 
   /**
@@ -138,7 +282,18 @@ class JobManager extends EventEmitter {
       message: `Job created: ${jobId}`,
     });
 
-    // Start job processing in background
+    // If queue is enabled, add job to queue for processing
+    if (this.useQueue && this.queueService) {
+      jobLogger.info({ jobId }, 'Adding job to queue');
+      await this.queueService.addJob(configYaml, {
+        targetId: options.selectedTargets[0], // Use first selected target
+        selectedOverlays: options.selectedOverlays,
+        manualBuilderConfig: options.manualBuilderConfig,
+      }, { jobId }); // Use same jobId for queue job
+      return jobId;
+    }
+
+    // Direct processing mode (no queue)
     this.processJob(jobId, config, analysis, options).catch((err) => {
       jobLogger.error({ jobId, err }, 'Job failed');
       this.updateJobStatus(jobId, 'failed', 0, err.message).catch((updateErr) => {

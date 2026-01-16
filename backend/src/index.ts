@@ -1,6 +1,9 @@
 import express from 'express';
 import cors from 'cors';
 import multer from 'multer';
+import pinoHttp from 'pino-http';
+import helmet from 'helmet';
+import rateLimit from 'express-rate-limit';
 import * as path from 'path';
 import configRouter from './api/configUpload.js';
 import plexRouter from './api/plexApi.js';
@@ -13,10 +16,19 @@ import communityRouter from './api/communityApi.js';
 import sharingRouter from './api/sharingApi.js';
 import { ensureDir } from './util/safeFs.js';
 import { getJobsBasePath, getFontsPath } from './jobs/paths.js';
-import { DEFAULT_PORT, DEFAULT_HOST, DEFAULT_CORS_ORIGIN } from './constants.js';
+import {
+  DEFAULT_PORT,
+  DEFAULT_HOST,
+  DEFAULT_CORS_ORIGIN,
+  MAX_FILE_SIZE_BYTES,
+  MAX_JSON_SIZE,
+  RATE_LIMIT_WINDOW_MS,
+  RATE_LIMIT_MAX_REQUESTS,
+} from './constants.js';
 import { initializeProfileStore } from './storage/profileStore.js';
 import { getJobManager } from './jobs/jobManager.js';
-import { serverLogger, dockerLogger, apiLogger } from './util/logger.js';
+import { serverLogger, dockerLogger, apiLogger, logger } from './util/logger.js';
+import { validateEnvironmentOrExit, logEnvironmentConfig } from './util/envValidation.js';
 
 // Load environment variables from process.env (with constants as defaults)
 const PORT = parseInt(process.env.PORT || String(DEFAULT_PORT), 10);
@@ -24,12 +36,19 @@ const HOST = process.env.HOST || DEFAULT_HOST;
 const CORS_ORIGIN = process.env.CORS_ORIGIN || DEFAULT_CORS_ORIGIN;
 
 async function main() {
-  // Ensure required directories exist
-  const jobsPath = getJobsBasePath();
-  const fontsPath = getFontsPath();
-
   serverLogger.info('Kometa Preview Studio - Backend');
   serverLogger.info('================================');
+
+  // Validate environment variables before proceeding
+  // This will exit with an error if required variables are invalid
+  validateEnvironmentOrExit();
+
+  // Log environment config at debug level for troubleshooting
+  logEnvironmentConfig();
+
+  // Get configured paths
+  const jobsPath = getJobsBasePath();
+  const fontsPath = getFontsPath();
   serverLogger.info({ jobsPath }, 'Jobs directory configured');
   serverLogger.info({ fontsPath }, 'Fonts directory configured');
 
@@ -47,14 +66,76 @@ async function main() {
     credentials: true,
   }));
 
-  app.use(express.json({ limit: '10mb' }));
-  app.use(express.urlencoded({ extended: true, limit: '10mb' }));
+  // Security headers via helmet
+  // Configured for local development tool (relaxed CSP for serving images)
+  app.use(helmet({
+    contentSecurityPolicy: {
+      directives: {
+        defaultSrc: ["'self'"],
+        imgSrc: ["'self'", 'data:', 'blob:', '*'], // Allow images from any source for Plex artwork
+        scriptSrc: ["'self'", "'unsafe-inline'"],
+        styleSrc: ["'self'", "'unsafe-inline'"],
+        connectSrc: ["'self'", '*'], // Allow API calls to Plex servers
+      },
+    },
+    crossOriginEmbedderPolicy: false, // Disable for image loading from external sources
+    crossOriginResourcePolicy: { policy: 'cross-origin' }, // Allow cross-origin resource sharing
+  }));
+
+  // Rate limiting - generous limits for local development tool
+  // Protects against runaway scripts but allows normal usage
+  const apiLimiter = rateLimit({
+    windowMs: RATE_LIMIT_WINDOW_MS,
+    max: RATE_LIMIT_MAX_REQUESTS,
+    message: { error: 'Too many requests, please try again later.' },
+    standardHeaders: true,
+    legacyHeaders: false,
+    skip: (req) => req.path === '/api/health', // Don't rate limit health checks
+  });
+  app.use('/api/', apiLimiter);
+
+  // Request logging middleware
+  app.use(pinoHttp({
+    logger,
+    // Don't log health checks to reduce noise
+    autoLogging: {
+      ignore: (req) => req.url === '/api/health',
+    },
+    // Customize serializers to avoid logging sensitive data
+    serializers: {
+      req: (req) => ({
+        method: req.method,
+        url: req.url,
+        // Don't log headers that might contain tokens
+      }),
+      res: (res) => ({
+        statusCode: res.statusCode,
+      }),
+    },
+    // Custom log level based on status code
+    customLogLevel: (req, res, err) => {
+      if (res.statusCode >= 500 || err) return 'error';
+      if (res.statusCode >= 400) return 'warn';
+      return 'info';
+    },
+    // Custom success message
+    customSuccessMessage: (req, res) => {
+      return `${req.method} ${req.url} completed`;
+    },
+    // Custom error message
+    customErrorMessage: (req, res, err) => {
+      return `${req.method} ${req.url} failed: ${err.message}`;
+    },
+  }));
+
+  app.use(express.json({ limit: MAX_JSON_SIZE }));
+  app.use(express.urlencoded({ extended: true, limit: MAX_JSON_SIZE }));
 
   // Multer for file uploads
   const upload = multer({
     storage: multer.memoryStorage(),
     limits: {
-      fileSize: 10 * 1024 * 1024, // 10MB limit
+      fileSize: MAX_FILE_SIZE_BYTES,
     },
     fileFilter: (req, file, cb) => {
       // Accept YAML files

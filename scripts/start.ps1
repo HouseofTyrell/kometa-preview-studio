@@ -167,6 +167,9 @@ KOMETA_RENDERER_IMAGE=kometa-preview-renderer:latest
 Write-Info "Checking for Inter font..."
 
 $interFontPath = Join-Path $fontsDir "Inter-Regular.ttf"
+# Minimum expected sizes (in bytes) for validation
+$MinZipSize = 1000000    # 1MB - Inter zip is ~17MB
+$MinFontSize = 100000    # 100KB - Inter-Regular.ttf is ~300KB
 
 if (-not (Test-Path $interFontPath)) {
     Write-Warn "Inter-Regular.ttf not found. Attempting to download..."
@@ -176,15 +179,47 @@ if (-not (Test-Path $interFontPath)) {
     $tempExtract = Join-Path $env:TEMP "Inter-Extract"
 
     try {
-        Write-Info "Downloading Inter font from GitHub..."
+        Write-Info "Downloading Inter font from GitHub (~17MB)..."
 
         # Clean up any previous temp files
         if (Test-Path $tempZip) { Remove-Item $tempZip -Force }
         if (Test-Path $tempExtract) { Remove-Item $tempExtract -Recurse -Force }
 
-        # Download the zip file
+        # Download the zip file with proper TLS and error handling
         [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
-        Invoke-WebRequest -Uri $interZipUrl -OutFile $tempZip -UseBasicParsing
+
+        try {
+            $response = Invoke-WebRequest -Uri $interZipUrl -OutFile $tempZip -UseBasicParsing -PassThru
+        } catch [System.Net.WebException] {
+            $statusCode = [int]$_.Exception.Response.StatusCode
+            throw "HTTP error $statusCode when downloading from GitHub. The release URL may have changed."
+        }
+
+        # Verify the downloaded file exists
+        if (-not (Test-Path $tempZip)) {
+            throw "Download appeared to succeed but file not found at $tempZip"
+        }
+
+        # Verify downloaded file has reasonable size
+        $zipFile = Get-Item $tempZip
+        $zipSize = $zipFile.Length
+        if ($zipSize -lt $MinZipSize) {
+            throw "Downloaded file is too small ($zipSize bytes, expected >1MB). GitHub may have returned an error page instead of the file."
+        }
+
+        $zipSizeFormatted = "{0:N2} MB" -f ($zipSize / 1MB)
+        Write-Info "Download complete ($zipSizeFormatted). Verifying archive..."
+
+        # Verify the zip file is valid before extracting
+        try {
+            $shell = New-Object -ComObject Shell.Application
+            $zipFolder = $shell.Namespace($tempZip)
+            if ($null -eq $zipFolder -or $null -eq $zipFolder.Items()) {
+                throw "Invalid ZIP structure"
+            }
+        } catch {
+            throw "Downloaded file is not a valid ZIP archive (possibly corrupted or incomplete)"
+        }
 
         Write-Info "Extracting Inter-Regular.ttf..."
 
@@ -197,22 +232,34 @@ if (-not (Test-Path $interFontPath)) {
         # Find and copy Inter-Regular.ttf
         $extractedFont = Get-ChildItem -Path $tempExtract -Recurse -Filter "Inter-Regular.ttf" | Select-Object -First 1
 
-        if ($extractedFont) {
-            Copy-Item -Path $extractedFont.FullName -Destination $interFontPath -Force
-            Write-Success "Inter-Regular.ttf installed to fonts/"
-        } else {
+        if (-not $extractedFont) {
+            Write-Err "Archive contents:"
+            Get-ChildItem -Path $tempExtract -Recurse | Select-Object -First 20 | ForEach-Object { Write-Err "  $($_.Name)" }
             throw "Could not find Inter-Regular.ttf in the downloaded archive"
         }
+
+        # Verify extracted font has reasonable size
+        $fontSize = $extractedFont.Length
+        if ($fontSize -lt $MinFontSize) {
+            throw "Extracted font file is too small ($fontSize bytes, expected >100KB)"
+        }
+
+        Copy-Item -Path $extractedFont.FullName -Destination $interFontPath -Force
+        $fontSizeFormatted = "{0:N0} KB" -f ($fontSize / 1KB)
+        Write-Success "Inter-Regular.ttf installed to fonts/ ($fontSizeFormatted)"
 
     } catch {
         Write-Err "Failed to download Inter font: $_"
         Write-Err ""
-        Write-Err "Please manually add a font to the fonts/ directory:"
-        Write-Err "  1. Download any .ttf or .otf font file"
-        Write-Err "  2. Place it in: $fontsDir"
-        Write-Err "  3. Run this script again"
+        Write-Err "Possible causes:"
+        Write-Err "  - No internet connection"
+        Write-Err "  - GitHub is unreachable"
+        Write-Err "  - The release URL has changed"
         Write-Err ""
-        Write-Err "Recommended: Download Inter from https://github.com/rsms/inter/releases"
+        Write-Err "Manual fix:"
+        Write-Err "  1. Download Inter from https://github.com/rsms/inter/releases"
+        Write-Err "  2. Extract Inter-Regular.ttf to: $fontsDir"
+        Write-Err "  3. Run this script again"
         exit 1
     } finally {
         # Cleanup temp files

@@ -1,4 +1,5 @@
 import { Router, Request, Response } from 'express';
+import { communityLogger } from '../util/logger.js';
 
 const router = Router();
 
@@ -31,7 +32,7 @@ router.get('/contributors-with-overlays', async (req: Request, res: Response) =>
 
     // Return cached result if still valid
     if (contributorsWithOverlaysCache && (now - cacheTimestamp) < CACHE_DURATION) {
-      console.log(`Returning cached contributors (${contributorsWithOverlaysCache.length} contributors)`);
+      communityLogger.debug({ count: contributorsWithOverlaysCache.length }, 'Returning cached contributors');
       res.json({
         contributors: contributorsWithOverlaysCache,
         total: contributorsWithOverlaysCache.length,
@@ -40,7 +41,7 @@ router.get('/contributors-with-overlays', async (req: Request, res: Response) =>
       return;
     }
 
-    console.log('Fetching and filtering contributors with overlays...');
+    communityLogger.info('Fetching and filtering contributors with overlays');
 
     // Fetch all contributors
     const headers: Record<string, string> = {
@@ -124,7 +125,7 @@ router.get('/contributors-with-overlays', async (req: Request, res: Response) =>
           }
         }
       } catch (err) {
-        console.warn(`Failed to check contributor ${username}:`, err);
+        communityLogger.warn({ err, username }, 'Failed to check contributor');
       }
     }
 
@@ -132,7 +133,7 @@ router.get('/contributors-with-overlays', async (req: Request, res: Response) =>
     contributorsWithOverlaysCache = filtered;
     cacheTimestamp = now;
 
-    console.log(`Found ${filtered.length} contributors with overlays`);
+    communityLogger.info({ count: filtered.length }, 'Found contributors with overlays');
 
     res.json({
       contributors: filtered,
@@ -141,7 +142,7 @@ router.get('/contributors-with-overlays', async (req: Request, res: Response) =>
     });
 
   } catch (err) {
-    console.error('Fetch contributors with overlays error:', err);
+    communityLogger.error({ err }, 'Fetch contributors with overlays error');
     res.status(500).json({
       error: 'Failed to fetch contributors with overlays',
       details: err instanceof Error ? err.message : 'Unknown error'
@@ -189,7 +190,7 @@ router.get('/contributors', async (req: Request, res: Response) => {
     });
 
   } catch (err) {
-    console.error('Fetch contributors error:', err);
+    communityLogger.error({ err }, 'Fetch contributors error');
     res.status(500).json({
       error: 'Failed to fetch community contributors',
       details: err instanceof Error ? err.message : 'Unknown error'
@@ -248,7 +249,7 @@ router.get('/contributor/:username', async (req: Request, res: Response) => {
     });
 
   } catch (err) {
-    console.error('Fetch contributor configs error:', err);
+    communityLogger.error({ err }, 'Fetch contributor configs error');
     res.status(500).json({
       error: 'Failed to fetch contributor configs',
       details: err instanceof Error ? err.message : 'Unknown error'
@@ -295,7 +296,7 @@ router.get('/config/:username/:filename', async (req: Request, res: Response) =>
     });
 
   } catch (err) {
-    console.error('Fetch config content error:', err);
+    communityLogger.error({ err }, 'Fetch config content error');
     res.status(500).json({
       error: 'Failed to fetch config content',
       details: err instanceof Error ? err.message : 'Unknown error'
@@ -348,7 +349,7 @@ router.post('/parse-overlays', async (req: Request, res: Response) => {
     });
 
   } catch (err) {
-    console.error('Parse overlays error:', err);
+    communityLogger.error({ err }, 'Parse overlays error');
     res.status(500).json({
       error: 'Failed to parse overlays',
       details: err instanceof Error ? err.message : 'Unknown error'

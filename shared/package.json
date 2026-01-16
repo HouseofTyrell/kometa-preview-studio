@@ -1,0 +1,18 @@
+{
+  "name": "@kometa-preview-studio/shared",
+  "version": "1.0.0",
+  "description": "Shared types for Kometa Preview Studio frontend and backend",
+  "type": "module",
+  "main": "./types.ts",
+  "types": "./types.ts",
+  "exports": {
+    ".": {
+      "import": "./types.ts",
+      "types": "./types.ts"
+    }
+  },
+  "files": [
+    "types.ts"
+  ],
+  "license": "MIT"
+}

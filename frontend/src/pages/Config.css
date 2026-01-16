@@ -175,3 +175,57 @@
 .template-selector-wrapper {
   max-width: 900px;
 }
+
+/* Profile expiry warning styles */
+.profile-expiry-warning {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  padding: 0.75rem 1rem;
+  background-color: rgba(255, 193, 7, 0.15);
+  border: 1px solid rgba(255, 193, 7, 0.4);
+  border-radius: var(--radius-sm);
+  font-size: 0.875rem;
+  color: var(--text-primary);
+  margin-bottom: 1rem;
+}
+
+.profile-expiry-warning.expired {
+  background-color: rgba(220, 53, 69, 0.15);
+  border-color: rgba(220, 53, 69, 0.4);
+}
+
+.profile-expiry-info {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  padding: 0.5rem 0.75rem;
+  background-color: var(--bg-tertiary);
+  border: 1px solid var(--border-color);
+  border-radius: var(--radius-sm);
+  font-size: 0.75rem;
+  margin-bottom: 1rem;
+}
+
+.expiry-icon {
+  font-size: 1rem;
+  color: #ffc107;
+}
+
+.profile-expiry-warning.expired .expiry-icon {
+  color: #dc3545;
+}
+
+.expiry-icon-info {
+  font-size: 0.875rem;
+  color: var(--text-secondary);
+}
+
+.expiry-text {
+  flex: 1;
+}
+
+.expiry-text-muted {
+  flex: 1;
+  color: var(--text-secondary);
+}

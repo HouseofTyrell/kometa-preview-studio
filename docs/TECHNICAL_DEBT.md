@@ -97,22 +97,20 @@ Frontend and backend now use consistent status values: `'pending' | 'running' | 
 
 ---
 
-### Console.log Migration to Pino (Partial)
-**Priority:** MEDIUM-HIGH
-**Impact:** No structured logging, hard to debug production issues
-**Status:** IN PROGRESS
+### ✅ Console.log Migration to Pino
+**Status:** RESOLVED
+**Resolution Date:** 2026-01-16
 
-**Completed:**
-- [x] Install `pino` and `pino-pretty` for structured logging
-- [x] Create logger utility (`backend/src/util/logger.ts`) with component loggers
-- [x] Migrate `index.ts` to use structured logging
-- [x] Migrate `jobManager.ts` to use structured logging
-- [x] Migrate `runner.ts` to use structured logging
-- [x] Add log levels (debug, info, warn, error)
+- Installed `pino` and `pino-pretty` for structured logging
+- Created logger utility (`backend/src/util/logger.ts`) with domain-specific loggers:
+  - `apiLogger`, `jobLogger`, `plexLogger`, `configLogger`, `runnerLogger`
+  - `storageLogger`, `tmdbLogger`, `communityLogger`, `sharingLogger`, `builderLogger`
+- Migrated all console.log/error/warn calls in backend source (48 calls across 10 files)
+- Debug tools in `debug/` folder intentionally left with console output
+- All logs now include structured context for better observability
 
-**Remaining Action Items:**
-- [ ] Migrate remaining ~170 console.log calls in other files
-- [ ] Add request logging middleware
+**Remaining Low Priority:**
+- [x] Add request logging middleware (RESOLVED 2026-01-16 - pino-http)
 - [ ] Configure log aggregation for production
 
 ---
@@ -131,17 +129,14 @@ Frontend and backend now use consistent status values: `'pending' | 'running' | 
 
 ---
 
-### 8. Error Boundaries in React
-**Priority:** MEDIUM
-**Impact:** Unclear error handling
-**Location:** `frontend/src/components/ErrorBoundary.tsx`
+### ✅ 8. Error Boundaries in React
+**Status:** VERIFIED
+**Verification Date:** 2026-01-16
 
-`ErrorBoundary` component exists but needs verification that it wraps routes.
-
-**Action Items:**
-- [ ] Verify error boundary is wrapping routes in App.tsx
-- [ ] Add fallback UI for uncaught errors
-- [ ] Test error boundary behavior
+- ErrorBoundary component wraps all Routes in App.tsx (lines 75-111)
+- Fallback UI shows error message with "Try Again" button
+- Errors logged via componentDidCatch
+- Styling uses CSS variables for theme consistency
 
 ---
 
@@ -157,96 +152,113 @@ Frontend and backend now use consistent status values: `'pending' | 'running' | 
 
 ---
 
-### 11. No Pagination for Job List
-**Priority:** MEDIUM
-**Impact:** Performance issue with many jobs
-**Location:** `backend/src/api/previewStatus.ts`
+### ✅ 11. No Pagination for Job List
+**Status:** RESOLVED
+**Resolution Date:** 2026-01-16
 
-**Action Items:**
-- [ ] Add `page` and `limit` query parameters
-- [ ] Implement offset-based pagination
-- [ ] Add `total` count to response
-- [ ] Update frontend to paginate
+- Added `page` and `limit` query parameters to `/api/preview/jobs`
+- Implemented offset-based pagination with total count
+- Added optional `status` filter for job filtering
+- Response includes `pagination` object with page, total, totalPages, hasNextPage, hasPrevPage
+- Default: 20 items per page, max: 100
 
----
-
-### Profile Expiry Not Communicated
-**Priority:** MEDIUM
-**Impact:** Users may lose data unexpectedly
-**Location:** `backend/src/constants.ts`
-
-Profiles auto-expire after 24 hours with no warning to users.
-
-**Action Items:**
-- [ ] Add expiry timestamp to profile API response
-- [ ] Show warning in UI when profile expires soon
-- [ ] Consider configurable expiry time
+**Remaining:**
+- [x] Update frontend to use pagination - RESOLVED 2026-01-16
+  - Updated `listJobs()` API function to accept pagination params
+  - Added `JobListParams` interface with page, limit, status options
+  - Added `PaginatedJobsResponse` type for typed responses
 
 ---
 
-### Instant Compositor HDR/DV Incomplete
-**Priority:** MEDIUM
-**Impact:** Draft previews don't match final for HDR/DV content
-**Location:** `renderer/instant_compositor.py:347-351`
+### ✅ Profile Expiry Not Communicated
+**Status:** RESOLVED
+**Resolution Date:** 2026-01-16
 
-HDR/DV badges don't composite correctly in fast preview mode.
+- Added `calculateExpiresAt()` helper to return expiry timestamp in API responses
+- Created `ProfileExpiryWarning.tsx` React component with live countdown
+- Component shows info (>2hrs), warning (<2hrs), or expired states
+- Countdown updates every minute
 
-**Action Items:**
-- [ ] Implement HDR/DV badge compositing
-- [ ] Or document as known limitation
+---
+
+### ✅ Instant Compositor HDR/DV Incomplete
+**Status:** RESOLVED
+**Resolution Date:** 2026-01-16
+
+- HDR/DV badges now properly composite with resolution PNG assets
+- Creates "dovetail" effect by stacking resolution PNG with HDR/DV text badge
+- Dolby Vision shows cyan "DV" badge, HDR shows gold "HDR" badge
+- Falls back to combined text badge when PNG assets unavailable
 
 ---
 
 ## Low Priority Issues
 
-### 13. Magic Numbers Remain
-**Priority:** LOW
-**Locations:** Various
+### ✅ 13. Magic Numbers Extracted to Constants
+**Status:** RESOLVED
+**Resolution Date:** 2026-01-16
 
-Some hardcoded values should be in constants:
-- Badge dimensions in `instant_compositor.py` (305, 105)
-- Poll intervals in frontend (2000ms)
+Backend constants extracted to `backend/src/constants.ts`:
+- `RATE_LIMIT_WINDOW_MS`, `RATE_LIMIT_MAX_REQUESTS` - API rate limiting
+- `PAGINATION` object - page, limit defaults and bounds
+- `RETRY_DEFAULTS` object - retry configuration
+- `TMDB_RETRY` object - TMDb API retry settings
+- `PROGRESS` object - job progress milestones (5, 10, 15, 30, 45, 50, 75, 90, 100)
+- `QUEUE_CONFIG` object - BullMQ queue settings
+- `CACHE_CONTROL` object - HTTP cache ages
+- `CONTAINER_STOP_TIMEOUT_SECONDS` - Docker container timeout
 
-**Action Items:**
-- [ ] Audit for remaining magic numbers
-- [ ] Extract to constants files
-- [ ] Document units in names
+Frontend constants created in `frontend/src/constants.ts`:
+- `DEBOUNCE_MS` object - autosave, search debounce values
+- `MESSAGE_TIMEOUT_MS` object - error, success, info message timeouts
+- `POLLING_INTERVAL_MS` object - job status, expiry update intervals
+- `ZOOM` object - min, max, step, default zoom values
+- `UNDO_HISTORY` object - max undo stack size
+- `TIME` object - profile expiry warnings, time conversions
+- `PAGINATION` object - default page and limit
 
 ---
 
-### 14. Missing Security Headers
-**Priority:** LOW (local-only app)
-**Location:** `backend/src/index.ts`
+### ✅ 14. Missing Security Headers
+**Status:** RESOLVED
+**Resolution Date:** 2026-01-16
 
-**Action Items:**
-- [ ] Add `helmet` middleware for security headers
-- [ ] Document HTTPS requirement for production
-- [ ] Add rate limiting for API endpoints
+- Added `helmet` middleware with CSP configured for Plex artwork
+- Added `express-rate-limit` middleware (200 req/min, health checks exempt)
+- Relaxed CSP to allow cross-origin images and API calls to Plex servers
 
 ---
 
-### Community/Sharing APIs Documentation
-**Priority:** LOW
-**Impact:** Unclear feature completeness
+### ✅ Community/Sharing APIs Documentation
+**Status:** RESOLVED
+**Resolution Date:** 2026-01-16
 
-Community and Sharing APIs exist but documentation is sparse.
-
-**Action Items:**
-- [ ] Document Community API usage and limitations
-- [ ] Document Sharing API usage
-- [ ] Add rate limiting for GitHub API calls
-- [ ] Or mark features as experimental in docs
+- Added full API documentation to README.md
+- Documented Builder, Community, and Sharing API endpoints with examples
+- Added curl examples for common operations
+- Noted GITHUB_TOKEN requirement for increased rate limits
 
 ---
 
 ## Architecture Improvements
 
-### Shared Types Package
-Consider creating `packages/shared` with:
-- API request/response types
-- Job status enums
-- Preview target definitions
-- Test options types
+### ✅ Shared Types Package
+**Status:** RESOLVED
+**Resolution Date:** 2026-01-16
+
+Created `shared/types.ts` with:
+- Job status types (JobStatus, JobStatusValue, JobTarget)
+- Media types (MediaType, PreviewTarget)
+- Config types (ConfigAnalysis)
+- Artifact types (JobArtifacts, JobArtifactItem)
+- Event types (JobEvent)
+- System control types (SystemAction, SystemActionResult)
+- Test options types (TestOptions)
+- API response types (ApiError, PaginatedResponse)
+
+Usage:
+- Backend: `import { JobStatus } from '../shared/types.js'`
+- Frontend: `import { JobStatus } from '../../shared/types'`
 
 ### Repository Pattern
 Status:
@@ -255,10 +267,33 @@ Status:
 - ✅ Artifact management (`ArtifactManager`)
 
 ### Event-Driven Architecture
-Consider for future:
-- Job queue (Bull/BullMQ) for background processing
-- Concurrent job limits
-- Retry logic with exponential backoff
+Status:
+- ✅ Retry logic with exponential backoff - ADDED 2026-01-16
+  - Created `util/retry.ts` with `withRetry()` and `isRetryableHttpError()`
+  - TMDb client now retries on network errors and rate limiting
+
+**✅ P4: Job Queue with BullMQ**
+**Status:** IMPLEMENTED
+**Resolution Date:** 2026-01-16
+
+Benefits:
+- Concurrent job execution with configurable limits
+- Job persistence across server restarts
+- Automatic retries with exponential backoff
+- Job prioritization and scheduling
+- Dead letter queue for failed jobs
+
+Implementation:
+- Created `queueConfig.ts` - Redis connection and queue configuration
+- Created `queueService.ts` - BullMQ queue and worker management
+- Updated `jobManager.ts` - Queue integration with fallback to direct mode
+- Added Redis service to `docker-compose.yml` with health checks
+- Queue mode auto-detected via REDIS_HOST environment variable
+
+Usage:
+- Development: Jobs process directly (no Redis required)
+- Production: Set REDIS_HOST=redis to enable queue mode
+- Queue stats available via `jobManager.getQueueStats()`
 
 ---
 
@@ -267,17 +302,46 @@ Consider for future:
 ### Unit Tests (Implemented)
 - ✅ Pure functions: `yaml.ts`, `hash.ts`
 - ✅ Business logic: `resolveTargets.ts`, `configGenerator.ts`
-- [ ] Plex client (with mocked HTTP)
+- ✅ Plex client (`plexClient.test.ts` with mocked HTTP) - ADDED 2026-01-16
 
-### Integration Tests (Priority 2)
-- [ ] API endpoint contracts
-- [ ] Job lifecycle
-- [ ] SSE event streaming
+### ✅ Integration Tests (Priority 2) - RESOLVED 2026-01-16
+- [x] API endpoint contracts - `api.test.ts` (26 tests)
+  - Health, targets, jobs pagination, status, artifacts
+  - Config upload/retrieval, job control endpoints
+- [x] Job lifecycle - `job-lifecycle.test.ts` (52 tests)
+  - State machine transitions, progress updates
+  - Event emissions, repository operations
+  - Complete lifecycle scenarios (success, pause/resume, cancel, failure)
+- [x] SSE event streaming - `sse-events.test.ts` (21 tests)
+  - Event formatting, connection lifecycle
+  - Full job lifecycle events, concurrent connections
+  - Helper functions (safeSSEWrite, parseSSEEvents)
 
-### E2E Tests (Priority 3)
-- [ ] Full preview workflow
-- [ ] Error scenarios
-- [ ] Browser compatibility
+### ✅ E2E Tests with Playwright (P4)
+**Status:** IMPLEMENTED
+**Resolution Date:** 2026-01-16
+
+Test scenarios covered:
+- [x] Smoke tests (app loads, navigation, API health)
+- [x] Full preview workflow (upload config → select target → run job)
+- [x] Error scenarios (invalid config, network failures, API errors)
+- [x] Browser compatibility (Chrome, Firefox, Safari, Mobile Chrome)
+- [ ] Visual regression testing (optional, not yet configured)
+
+Implementation:
+- Installed `@playwright/test` in frontend
+- Created `playwright.config.ts` with multi-browser support
+- Created page objects: `ConfigPage`, `PreviewPage`, `ResultsPage`
+- Created test files: `smoke.spec.ts`, `preview-workflow.spec.ts`, `error-scenarios.spec.ts`
+
+Usage:
+```bash
+cd frontend
+npm run test:e2e           # Run all E2E tests
+npm run test:e2e:ui        # Run with visual UI
+npm run test:e2e:headed    # Run with visible browser
+npx playwright install     # First-time: install browsers
+```
 
 ---
 
@@ -291,22 +355,29 @@ Consider for future:
 | `vitest` | Frontend testing | ✅ Installed |
 | `pino` | Structured logging | ✅ Installed |
 | `pino-pretty` | Dev log formatting | ✅ Installed |
+| `pino-http` | Request logging | ✅ Installed |
+| `helmet` | Security headers | ✅ Installed |
+| `express-rate-limit` | Rate limiting | ✅ Installed |
+| `bullmq` | Job queue | ✅ Installed |
+| `ioredis` | Redis client | ✅ Installed |
+| `@playwright/test` | E2E testing | ✅ Installed |
 
 ### Still Needed
 | Package | Purpose | Priority |
 |---------|---------|----------|
-| `helmet` | Security headers | Low |
-| `express-rate-limit` | Rate limiting | Low |
+| - | All major dependencies installed | - |
 
 ---
 
 ## Quick Wins Remaining
 
-1. [ ] Add request logging middleware
-2. [ ] Verify error boundary coverage
-3. [ ] Add profile expiry to API response
-4. [ ] Document Community/Sharing API status
-5. [ ] Add environment variable validation on startup
+1. [x] Add request logging middleware (RESOLVED 2026-01-16 - pino-http)
+2. [x] Verify error boundary coverage (VERIFIED 2026-01-16)
+3. [x] Add profile expiry to API response (RESOLVED 2026-01-16)
+4. [x] Document Community/Sharing API status (RESOLVED 2026-01-16 - in README.md)
+5. [x] Add environment variable validation on startup (RESOLVED 2026-01-16)
+
+**All quick wins completed!**
 
 ---
 

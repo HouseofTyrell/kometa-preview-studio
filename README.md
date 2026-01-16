@@ -291,6 +291,8 @@ For more technical details, see [renderer/PREVIEW_MODE.md](renderer/PREVIEW_MODE
 
 ## API Endpoints
 
+### Core Endpoints
+
 | Endpoint | Method | Description |
 |----------|--------|-------------|
 | `/api/health` | GET | Health check |
@@ -302,6 +304,79 @@ For more technical details, see [renderer/PREVIEW_MODE.md](renderer/PREVIEW_MODE
 | `/api/preview/artifacts/:id` | GET | Get job artifacts |
 | `/api/preview/image/:id/:folder/:file` | GET | Serve image |
 | `/api/preview/logs/:id` | GET | Get job logs |
+
+### Builder API
+
+The Builder API allows programmatic management of overlay configurations within profiles.
+
+| Endpoint | Method | Description |
+|----------|--------|-------------|
+| `/api/builder/overlays/:profileId` | GET | Extract overlay configs from a profile |
+| `/api/builder/overlays/:profileId` | PUT | Save overlay configs back to a profile |
+| `/api/builder/export` | POST | Export builder configuration as JSON |
+| `/api/builder/import` | POST | Validate and import builder configuration |
+
+**Example: Get overlays from profile**
+```bash
+curl http://localhost:3001/api/builder/overlays/abc123
+```
+
+**Example: Save overlays to profile**
+```bash
+curl -X PUT http://localhost:3001/api/builder/overlays/abc123 \
+  -H "Content-Type: application/json" \
+  -d '{"overlaysByLibrary": {"Movies": ["pmm: resolution"]}}'
+```
+
+### Community API
+
+The Community API provides access to the [Kometa Community Configs](https://github.com/Kometa-Team/Community-Configs) repository.
+
+| Endpoint | Method | Description |
+|----------|--------|-------------|
+| `/api/community/contributors` | GET | List all contributors |
+| `/api/community/contributors-with-overlays` | GET | List contributors with overlay configs (cached 24h) |
+| `/api/community/contributor/:username` | GET | Get configs from a specific contributor |
+| `/api/community/config/:username/:filename` | GET | Fetch raw config file content |
+| `/api/community/parse-overlays` | POST | Parse overlay info from YAML content |
+
+**Note:** Set `GITHUB_TOKEN` environment variable to increase GitHub API rate limit from 60 to 5000 requests/hour.
+
+**Example: List contributors with overlay configs**
+```bash
+curl http://localhost:3001/api/community/contributors-with-overlays
+```
+
+**Example: Get a contributor's config**
+```bash
+curl http://localhost:3001/api/community/config/meisnate12/config.yml
+```
+
+### Sharing API
+
+The Sharing API enables sharing overlay configurations via local links or GitHub Gists.
+
+| Endpoint | Method | Description |
+|----------|--------|-------------|
+| `/api/share/create` | POST | Create a local shareable link |
+| `/api/share/:shareId` | GET | Get a shared configuration by ID |
+| `/api/share/gist` | POST | Export configuration to GitHub Gist |
+| `/api/share/gist/:gistId` | GET | Import configuration from GitHub Gist |
+| `/api/share/list/all` | GET | List all local shares (admin) |
+
+**Example: Create a local share**
+```bash
+curl -X POST http://localhost:3001/api/share/create \
+  -H "Content-Type: application/json" \
+  -d '{"config": {"enabledOverlays": {"resolution": true}}, "metadata": {"title": "My Config"}}'
+```
+
+**Example: Export to GitHub Gist**
+```bash
+curl -X POST http://localhost:3001/api/share/gist \
+  -H "Content-Type: application/json" \
+  -d '{"config": {...}, "githubToken": "ghp_xxxx"}'
+```
 
 ## Configuration
 
