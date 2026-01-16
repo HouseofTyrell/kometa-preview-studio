@@ -726,7 +726,7 @@ def create_ratings_overlay(
     return result
 
 
-def _create_single_rating_badge(source: str, value: str) -> Optional[Image.Image]:
+def _create_single_rating_badge(source: str, value: str, font_size: int = 63) -> Optional[Image.Image]:
     """Create a single rating badge with logo and value matching Kometa dimensions."""
     # Kometa default dimensions for vertical alignment (square badges)
     badge_width = 160
@@ -767,8 +767,8 @@ def _create_single_rating_badge(source: str, value: str) -> Optional[Image.Image
         badge.paste(logo, (logo_x, current_y), logo)
         current_y += logo.height + 10
 
-    # Add rating value text (Kometa default font size is 63)
-    font = _get_cached_font(63)
+    # Add rating value text with custom font size (from user config)
+    font = _get_cached_font(font_size)
     text_bbox = draw.textbbox((0, 0), value, font=font)
     text_width = text_bbox[2] - text_bbox[0]
     text_height = text_bbox[3] - text_bbox[1]
@@ -1011,19 +1011,20 @@ def composite_overlays(
                 img.paste(studio_overlay, (x, y), studio_overlay)
 
         # Ratings - Kometa stacks them vertically with center rating at vertical center
+        # Font sizes from user config: RT=63, IMDb=70, TMDb=70
         ratings_data = []
         if metadata.get('rtRating'):
-            ratings_data.append(('rt_critics', f"{metadata.get('rtRating')}%"))
+            ratings_data.append(('rt_critics', f"{metadata.get('rtRating')}%", 63))
         if metadata.get('imdbRating'):
-            ratings_data.append(('imdb', f"{metadata.get('imdbRating'):.1f}"))
+            ratings_data.append(('imdb', f"{metadata.get('imdbRating'):.1f}", 70))
         if metadata.get('tmdbRating'):
-            ratings_data.append(('tmdb', f"{metadata.get('tmdbRating'):.1f}"))
+            ratings_data.append(('tmdb', f"{metadata.get('tmdbRating'):.1f}", 70))
 
         if ratings_data:
             # Create individual rating badges
             rating_badges = []
-            for source, value in ratings_data[:3]:  # Limit to 3 ratings
-                badge = _create_single_rating_badge(source, value)
+            for source, value, font_size in ratings_data[:3]:  # Limit to 3 ratings
+                badge = _create_single_rating_badge(source, value, font_size)
                 if badge:
                     rating_badges.append(badge)
 
