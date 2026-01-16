@@ -80,7 +80,9 @@ services:
         - KOMETA_IMAGE_TAG=${KOMETA_IMAGE_TAG:-v2.2.2}
     image: kometa-preview-renderer:latest
     # This service only builds the image, then exits immediately
-    command: ["echo", "Renderer image built successfully"]
+    # Override entrypoint since Dockerfile sets python3 as entrypoint
+    entrypoint: ["/bin/sh", "-c"]
+    command: ["echo 'Renderer image built successfully'"]
     restart: "no"
     networks:
       - kometa-preview
