@@ -155,16 +155,18 @@ Frontend and backend now use consistent status values: `'pending' | 'running' | 
 
 ---
 
-### 11. No Pagination for Job List
-**Priority:** MEDIUM
-**Impact:** Performance issue with many jobs
-**Location:** `backend/src/api/previewStatus.ts`
+### ✅ 11. No Pagination for Job List
+**Status:** RESOLVED
+**Resolution Date:** 2026-01-16
 
-**Action Items:**
-- [ ] Add `page` and `limit` query parameters
-- [ ] Implement offset-based pagination
-- [ ] Add `total` count to response
-- [ ] Update frontend to paginate
+- Added `page` and `limit` query parameters to `/api/preview/jobs`
+- Implemented offset-based pagination with total count
+- Added optional `status` filter for job filtering
+- Response includes `pagination` object with page, total, totalPages, hasNextPage, hasPrevPage
+- Default: 20 items per page, max: 100
+
+**Remaining:**
+- [ ] Update frontend to use pagination (currently fetches all)
 
 ---
 

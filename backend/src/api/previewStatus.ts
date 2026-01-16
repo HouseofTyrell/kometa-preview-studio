@@ -277,15 +277,39 @@ router.get('/active', async (req: Request, res: Response) => {
 
 /**
  * GET /api/preview/jobs
- * List all jobs
+ * List all jobs with pagination support
+ *
+ * Query parameters:
+ * - page: Page number (1-indexed, default: 1)
+ * - limit: Items per page (default: 20, max: 100)
+ * - status: Filter by status (optional)
  */
 router.get('/jobs', async (req: Request, res: Response) => {
   try {
     const jobManager = getJobManager();
-    const jobs = await jobManager.listJobs();
+
+    // Parse pagination parameters
+    const page = Math.max(1, parseInt(req.query.page as string) || 1);
+    const limit = Math.min(100, Math.max(1, parseInt(req.query.limit as string) || 20));
+    const statusFilter = req.query.status as string | undefined;
+
+    // Get all jobs (already sorted by createdAt descending)
+    let allJobs = await jobManager.listJobs();
+
+    // Apply status filter if provided
+    if (statusFilter) {
+      allJobs = allJobs.filter(job => job.status === statusFilter);
+    }
+
+    const total = allJobs.length;
+    const totalPages = Math.ceil(total / limit);
+    const offset = (page - 1) * limit;
+
+    // Slice for pagination
+    const paginatedJobs = allJobs.slice(offset, offset + limit);
 
     res.json({
-      jobs: jobs.map((job) => ({
+      jobs: paginatedJobs.map((job) => ({
         jobId: job.jobId,
         status: job.status,
         progress: job.progress,
@@ -293,6 +317,14 @@ router.get('/jobs', async (req: Request, res: Response) => {
         completedAt: job.completedAt,
         error: job.error,
       })),
+      pagination: {
+        page,
+        limit,
+        total,
+        totalPages,
+        hasNextPage: page < totalPages,
+        hasPrevPage: page > 1,
+      },
     });
 
   } catch (err) {
