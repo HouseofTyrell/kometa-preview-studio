@@ -327,7 +327,9 @@ def create_combined_resolution_hdr_badge(
     This matches Kometa's behavior of combining resolution and HDR info
     into a single badge (e.g., "4K DV" instead of separate "4K" and "DV" badges).
 
-    Tries to use PNG asset for resolution first, then overlays HDR/DV text if needed.
+    Tries to use PNG asset for resolution first, then stacks HDR/DV badge if needed.
+    Kometa doesn't provide PNG assets for HDR/DV, so we create text badges and
+    stack them horizontally with the resolution PNG (dovetail effect).
 
     Args:
         resolution: Resolution string (4K, 1080p, etc.)
@@ -341,15 +343,50 @@ def create_combined_resolution_hdr_badge(
     if HAS_OVERLAY_ASSETS:
         asset_data = get_resolution_asset(resolution)
         if asset_data:
-            base_badge = load_png_overlay(asset_data, max_width=305, max_height=105)
-            if base_badge:
+            res_badge = load_png_overlay(asset_data, max_width=305, max_height=105)
+            if res_badge:
                 print(f"  Using resolution PNG asset for: {resolution}")
-                # TODO: When HDR/DV is present, Kometa uses "dovetail" to combine
-                # For now, if HDR/DV is present, we still return the PNG but note
-                # that ideally we'd composite HDR/DV text onto the badge or stack them
+
+                # If HDR/DV is present, create combined badge with dovetail effect
                 if dolby_vision or hdr:
-                    print(f"  Note: HDR/DV present but not yet composited onto resolution PNG")
-                return base_badge
+                    # Create HDR/DV text badge (Kometa doesn't have PNG assets for these)
+                    if dolby_vision:
+                        hdr_text = "DV"
+                        hdr_color = "#00D4AA"  # Cyan for Dolby Vision
+                    else:
+                        hdr_text = "HDR"
+                        hdr_color = "#FFD700"  # Gold for HDR
+
+                    # Create smaller HDR badge to stack next to resolution
+                    hdr_badge = create_badge(
+                        hdr_text,
+                        width=100,
+                        height=res_badge.height,
+                        text_color=hdr_color,
+                        font_size=38,
+                        bg_alpha=180
+                    )
+
+                    # Stack horizontally: [Resolution PNG] [HDR/DV badge]
+                    gap = 5  # Small gap between badges
+                    combined_width = res_badge.width + gap + hdr_badge.width
+                    combined_height = max(res_badge.height, hdr_badge.height)
+
+                    combined = Image.new('RGBA', (combined_width, combined_height), (0, 0, 0, 0))
+
+                    # Paste resolution badge on left
+                    res_y = (combined_height - res_badge.height) // 2
+                    combined.paste(res_badge, (0, res_y), res_badge)
+
+                    # Paste HDR badge on right
+                    hdr_x = res_badge.width + gap
+                    hdr_y = (combined_height - hdr_badge.height) // 2
+                    combined.paste(hdr_badge, (hdr_x, hdr_y), hdr_badge)
+
+                    print(f"  Combined with {hdr_text} badge (dovetail effect)")
+                    return combined
+
+                return res_badge
         else:
             print(f"  No resolution PNG asset found for: {resolution}, using text badge")
 

@@ -178,16 +178,14 @@ Frontend and backend now use consistent status values: `'pending' | 'running' | 
 
 ---
 
-### Instant Compositor HDR/DV Incomplete
-**Priority:** MEDIUM
-**Impact:** Draft previews don't match final for HDR/DV content
-**Location:** `renderer/instant_compositor.py:347-351`
+### ✅ Instant Compositor HDR/DV Incomplete
+**Status:** RESOLVED
+**Resolution Date:** 2026-01-16
 
-HDR/DV badges don't composite correctly in fast preview mode.
-
-**Action Items:**
-- [ ] Implement HDR/DV badge compositing
-- [ ] Or document as known limitation
+- HDR/DV badges now properly composite with resolution PNG assets
+- Creates "dovetail" effect by stacking resolution PNG with HDR/DV text badge
+- Dolby Vision shows cyan "DV" badge, HDR shows gold "HDR" badge
+- Falls back to combined text badge when PNG assets unavailable
 
 ---
 
