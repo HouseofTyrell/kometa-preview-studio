@@ -2,6 +2,7 @@ import { BrowserRouter, Routes, Route, Navigate, Link, useLocation } from 'react
 import { useState } from 'react'
 import ConfigPage from './pages/Config'
 import PreviewPage from './pages/Preview'
+import OverlayBuilderPage from './pages/OverlayBuilder'
 import ErrorBoundary from './components/ErrorBoundary'
 import { ThemeProvider } from './context/ThemeContext'
 import ThemeToggle from './components/ThemeToggle'
@@ -33,6 +34,12 @@ function NavHeader() {
               className={`nav-link ${location.pathname === '/preview' ? 'active' : ''}`}
             >
               Preview
+            </Link>
+            <Link
+              to="/builder"
+              className={`nav-link ${location.pathname === '/builder' ? 'active' : ''}`}
+            >
+              Builder
             </Link>
           </nav>
           <ThemeToggle />
@@ -84,6 +91,18 @@ function App() {
                       configYaml={appState.configYaml}
                       libraryNames={appState.libraryNames}
                       overlayFiles={appState.overlayFiles}
+                    />
+                  }
+                />
+                <Route
+                  path="/builder"
+                  element={
+                    <OverlayBuilderPage
+                      profileId={appState.profileId}
+                      configYaml={appState.configYaml}
+                      libraryNames={appState.libraryNames}
+                      overlayFiles={appState.overlayFiles}
+                      onConfigUpdate={updateConfig}
                     />
                   }
                 />

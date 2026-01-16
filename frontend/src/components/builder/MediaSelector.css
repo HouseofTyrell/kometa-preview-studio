@@ -1,0 +1,216 @@
+.media-selector {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+}
+
+.targets-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: var(--spacing-sm, 0.5rem) 0;
+  margin-bottom: var(--spacing-sm, 0.5rem);
+  border-bottom: 1px solid var(--border-color, #e0e0e0);
+}
+
+.targets-header h4 {
+  margin: 0;
+  font-size: 0.875rem;
+  font-weight: 600;
+  color: var(--text-primary, #1a1a1a);
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+}
+
+.targets-count {
+  font-size: 0.75rem;
+  color: var(--text-muted, #666);
+  background: var(--bg-secondary, #f5f5f5);
+  padding: 0.25rem 0.5rem;
+  border-radius: var(--radius-sm, 6px);
+}
+
+.targets-list {
+  display: flex;
+  flex-direction: column;
+  gap: var(--spacing-md, 1rem);
+  overflow-y: auto;
+  flex: 1;
+  padding: var(--spacing-xs, 0.25rem);
+}
+
+.target-card {
+  display: flex;
+  align-items: center;
+  gap: var(--spacing-sm, 0.5rem);
+  padding: var(--spacing-sm, 0.5rem);
+  background: var(--bg-secondary, #f5f5f5);
+  border: 2px solid var(--border-color, #e0e0e0);
+  border-radius: var(--radius-md, 8px);
+  cursor: pointer;
+  transition: all 0.2s ease;
+  text-align: left;
+  width: 100%;
+}
+
+.target-card:hover {
+  background: var(--bg-primary, #ffffff);
+  border-color: var(--color-primary, #2563eb);
+  box-shadow: 0 2px 8px rgba(37, 99, 235, 0.1);
+}
+
+.target-card.selected {
+  background: var(--bg-primary, #ffffff);
+  border-color: var(--color-primary, #2563eb);
+  box-shadow: 0 2px 12px rgba(37, 99, 235, 0.2);
+}
+
+.target-icon {
+  font-size: 1.5rem;
+  width: 36px;
+  height: 36px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: var(--bg-primary, #ffffff);
+  border-radius: var(--radius-sm, 6px);
+  flex-shrink: 0;
+}
+
+.target-info {
+  flex: 1;
+  min-width: 0;
+}
+
+.target-title {
+  font-size: 0.875rem;
+  font-weight: 600;
+  color: var(--text-primary, #1a1a1a);
+  margin-bottom: 0.25rem;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.target-badge {
+  display: inline-block;
+  font-size: 0.75rem;
+  font-weight: 500;
+  padding: 0.125rem 0.5rem;
+  border-radius: var(--radius-sm, 6px);
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+}
+
+.badge-movie {
+  background: #dbeafe;
+  color: #1e40af;
+}
+
+.badge-show {
+  background: #fce7f3;
+  color: #9f1239;
+}
+
+.badge-season {
+  background: #fef3c7;
+  color: #92400e;
+}
+
+.badge-episode {
+  background: #d1fae5;
+  color: #065f46;
+}
+
+.badge-default {
+  background: var(--bg-secondary, #f5f5f5);
+  color: var(--text-muted, #666);
+}
+
+.target-selected-indicator {
+  width: 24px;
+  height: 24px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: var(--color-primary, #2563eb);
+  color: white;
+  border-radius: 50%;
+  font-size: 0.875rem;
+  font-weight: bold;
+  flex-shrink: 0;
+}
+
+.no-selection-hint {
+  text-align: center;
+  padding: var(--spacing-xl, 2rem) var(--spacing-md, 1rem);
+  color: var(--text-muted, #666);
+}
+
+.no-selection-hint p {
+  margin: 0;
+  font-size: 0.875rem;
+}
+
+/* Dark mode support */
+@media (prefers-color-scheme: dark) {
+  .targets-header h4 {
+    color: var(--text-primary, #f5f5f5);
+  }
+
+  .targets-count {
+    background: var(--bg-secondary, #2a2a2a);
+    color: var(--text-muted, #999);
+  }
+
+  .target-card {
+    background: var(--bg-secondary, #2a2a2a);
+  }
+
+  .target-card:hover {
+    background: var(--bg-primary, #1a1a1a);
+    box-shadow: 0 2px 8px rgba(37, 99, 235, 0.2);
+  }
+
+  .target-card.selected {
+    background: var(--bg-primary, #1a1a1a);
+    box-shadow: 0 2px 12px rgba(37, 99, 235, 0.3);
+  }
+
+  .target-icon {
+    background: var(--bg-primary, #1a1a1a);
+  }
+
+  .target-title {
+    color: var(--text-primary, #f5f5f5);
+  }
+
+  .badge-movie {
+    background: #1e3a8a;
+    color: #dbeafe;
+  }
+
+  .badge-show {
+    background: #831843;
+    color: #fce7f3;
+  }
+
+  .badge-season {
+    background: #78350f;
+    color: #fef3c7;
+  }
+
+  .badge-episode {
+    background: #064e3b;
+    color: #d1fae5;
+  }
+
+  .badge-default {
+    background: var(--bg-secondary, #2a2a2a);
+    color: var(--text-muted, #999);
+  }
+
+  .no-selection-hint {
+    color: var(--text-muted, #999);
+  }
+}

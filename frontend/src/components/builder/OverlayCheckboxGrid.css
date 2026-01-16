@@ -1,0 +1,191 @@
+.overlay-checkbox-grid {
+  display: flex;
+  flex-direction: column;
+  gap: var(--spacing-sm, 0.5rem);
+  padding: 0;
+  max-height: none;
+  overflow-y: auto;
+}
+
+.overlay-group {
+  background: var(--bg-primary, #ffffff);
+  border: 1px solid var(--border-color, #e0e0e0);
+  border-radius: var(--radius-md, 8px);
+  overflow: hidden;
+}
+
+.group-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: var(--spacing-sm, 0.5rem) var(--spacing-md, 1rem);
+  background: var(--bg-secondary, #f5f5f5);
+  border-bottom: 1px solid var(--border-color, #e0e0e0);
+}
+
+.group-header h4 {
+  margin: 0;
+  font-size: 0.875rem;
+  font-weight: 600;
+  color: var(--text-primary, #1a1a1a);
+}
+
+.group-actions {
+  display: flex;
+  gap: var(--spacing-xs, 0.25rem);
+}
+
+.group-action-button {
+  padding: 0.25rem 0.625rem;
+  font-size: 0.75rem;
+  font-weight: 600;
+  color: var(--color-primary, #2563eb);
+  background: rgba(37, 99, 235, 0.08);
+  border: 1px solid transparent;
+  border-radius: var(--radius-sm, 4px);
+  cursor: pointer;
+  transition: all 0.2s ease;
+}
+
+.group-action-button:hover:not(:disabled) {
+  background: rgba(37, 99, 235, 0.15);
+  border-color: var(--color-primary, #2563eb);
+  color: var(--color-primary-hover, #1d4ed8);
+}
+
+.group-action-button:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+
+.overlay-list {
+  display: flex;
+  flex-direction: column;
+  padding: var(--spacing-xs, 0.25rem);
+}
+
+.overlay-item {
+  display: grid;
+  grid-template-columns: auto auto 1fr auto;
+  gap: var(--spacing-sm, 0.5rem);
+  align-items: center;
+  padding: var(--spacing-sm, 0.5rem) var(--spacing-md, 1rem);
+  cursor: pointer;
+  border-radius: var(--radius-sm, 6px);
+  transition: background 0.2s ease;
+}
+
+.overlay-item:hover:not(.disabled) {
+  background: var(--bg-secondary, #f5f5f5);
+}
+
+.overlay-item.disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+
+.overlay-item input[type="checkbox"] {
+  width: 18px;
+  height: 18px;
+  cursor: pointer;
+  accent-color: var(--color-primary, #2563eb);
+}
+
+.overlay-item.disabled input[type="checkbox"] {
+  cursor: not-allowed;
+}
+
+.overlay-icon {
+  font-size: 1.25rem;
+  line-height: 1;
+}
+
+.overlay-label {
+  font-size: 0.875rem;
+  font-weight: 500;
+  color: var(--text-primary, #1a1a1a);
+}
+
+.overlay-description {
+  font-size: 0.75rem;
+  color: var(--text-muted, #666);
+  text-align: right;
+}
+
+/* Scrollbar styling */
+.overlay-checkbox-grid::-webkit-scrollbar {
+  width: 8px;
+}
+
+.overlay-checkbox-grid::-webkit-scrollbar-track {
+  background: var(--bg-secondary, #f5f5f5);
+  border-radius: 4px;
+}
+
+.overlay-checkbox-grid::-webkit-scrollbar-thumb {
+  background: var(--border-color, #e0e0e0);
+  border-radius: 4px;
+}
+
+.overlay-checkbox-grid::-webkit-scrollbar-thumb:hover {
+  background: var(--text-muted, #666);
+}
+
+/* Dark mode support */
+@media (prefers-color-scheme: dark) {
+  .overlay-group {
+    background: var(--bg-primary, #1a1a1a);
+    border-color: var(--border-color, #333);
+  }
+
+  .group-header {
+    background: var(--bg-secondary, #2a2a2a);
+    border-color: var(--border-color, #333);
+  }
+
+  .group-header h4 {
+    color: var(--text-primary, #f5f5f5);
+  }
+
+  .group-action-button:hover:not(:disabled) {
+    background: var(--bg-primary, #1a1a1a);
+  }
+
+  .overlay-item:hover:not(.disabled) {
+    background: var(--bg-secondary, #2a2a2a);
+  }
+
+  .overlay-label {
+    color: var(--text-primary, #f5f5f5);
+  }
+
+  .overlay-description {
+    color: var(--text-muted, #999);
+  }
+
+  .overlay-checkbox-grid::-webkit-scrollbar-track {
+    background: var(--bg-secondary, #2a2a2a);
+  }
+
+  .overlay-checkbox-grid::-webkit-scrollbar-thumb {
+    background: var(--border-color, #333);
+  }
+
+  .overlay-checkbox-grid::-webkit-scrollbar-thumb:hover {
+    background: var(--text-muted, #999);
+  }
+}
+
+/* Mobile responsive */
+@media (max-width: 768px) {
+  .overlay-item {
+    grid-template-columns: auto auto 1fr;
+    grid-template-rows: auto auto;
+  }
+
+  .overlay-description {
+    grid-column: 2 / -1;
+    text-align: left;
+    margin-top: 0.25rem;
+  }
+}

@@ -27,6 +27,24 @@ export interface PreviewMetadata {
   status?: 'returning' | 'ended' | 'canceled' | 'airing';
   // Ribbon type (for ribbon overlay)
   ribbon?: string;
+  // Aspect ratio (for aspect overlay)
+  aspect?: string;
+  // Language count (for language_count overlay)
+  languageCount?: number;
+  // Language codes (for languages overlay - flags)
+  languages?: string[];
+  // Runtime in minutes (for runtimes overlay - movies only)
+  runtime?: number;
+  // Edition/version info (for versions overlay - movies only)
+  version?: string;
+  // Content rating (for content_rating overlays)
+  contentRating?: string;
+  // Common Sense Media age recommendation (for commonsense overlay)
+  commonSenseAge?: number;
+  // Has post-credits scene (for mediastinger overlay - movies only)
+  mediaStinger?: boolean;
+  // Direct play only indicator (for direct_play overlay)
+  directPlay?: boolean;
 }
 
 export interface PreviewTarget {
@@ -76,6 +94,14 @@ export const PREVIEW_TARGETS: PreviewTarget[] = [
       tmdbRating: 8.2,
       rtRating: 83,
       ribbon: 'imdb_top_250',
+      aspect: '2.35',  // Anamorphic/Scope
+      languageCount: 12,
+      languages: ['en', 'es', 'fr', 'de', 'it', 'ja'],
+      runtime: 136,
+      contentRating: 'R',  // US rating
+      commonSenseAge: 13,
+      mediaStinger: false,
+      directPlay: false,
     },
   },
   {
@@ -95,6 +121,15 @@ export const PREVIEW_TARGETS: PreviewTarget[] = [
       tmdbRating: 7.8,
       rtRating: 83,
       ribbon: 'imdb_top_250',
+      aspect: '2.39',  // IMAX scenes are 1.90
+      languageCount: 15,
+      languages: ['en', 'es', 'fr', 'de', 'it', 'pt', 'ja', 'zh'],
+      runtime: 155,
+      version: 'IMAX Enhanced',
+      contentRating: 'PG-13',  // US rating
+      commonSenseAge: 13,
+      mediaStinger: false,
+      directPlay: false,
     },
   },
   {
@@ -106,11 +141,20 @@ export const PREVIEW_TARGETS: PreviewTarget[] = [
       streaming: ['netflix', 'amc_plus'],
       network: 'AMC',
       studio: 'Sony Pictures Television',
+      resolution: '1080p',
+      audioCodec: 'AAC',
+      hdr: false,
       imdbRating: 9.5,
       tmdbRating: 8.9,
       rtRating: 96,
       status: 'ended',
       ribbon: 'rt_certified_fresh',  // 96% RT - show variety by using different ribbon
+      aspect: '1.78',  // 16:9 widescreen
+      languageCount: 8,
+      languages: ['en', 'es', 'fr', 'de', 'it'],
+      contentRating: 'TV-MA',  // US TV rating
+      commonSenseAge: 17,
+      directPlay: false,
     },
   },
   {
@@ -124,6 +168,19 @@ export const PREVIEW_TARGETS: PreviewTarget[] = [
       network: 'AMC',
       studio: 'Sony Pictures Television',
       resolution: '1080p',
+      audioCodec: 'AAC',
+      hdr: false,
+      imdbRating: 9.2,
+      tmdbRating: 8.7,
+      rtRating: 93,
+      // Note: status badge doesn't apply to seasons, only shows
+      // Note: using a different ribbon type for variety
+      ribbon: 'imdb_top_250',
+      aspect: '1.78',  // 16:9 widescreen
+      languageCount: 8,
+      languages: ['en', 'es', 'fr', 'de', 'it'],
+      contentRating: 'TV-MA',  // US TV rating
+      directPlay: false,
     },
   },
   {
@@ -139,8 +196,16 @@ export const PREVIEW_TARGETS: PreviewTarget[] = [
       studio: 'Sony Pictures Television',
       resolution: '1080p',
       audioCodec: 'AAC',
+      hdr: false,
       imdbRating: 9.0,
       tmdbRating: 8.5,
+      rtRating: 88,
+      // Note: status and ribbon don't typically apply to individual episodes
+      aspect: '1.78',  // 16:9 widescreen
+      languageCount: 8,
+      languages: ['en', 'es', 'fr', 'de', 'it'],
+      contentRating: 'TV-MA',  // US TV rating
+      directPlay: false,
     },
   },
 ];
@@ -158,6 +223,22 @@ export async function resolveTargets(
 
   // Filter targets based on test options
   const targetsToResolve = filterTargets(PREVIEW_TARGETS, testOptions);
+
+  // If manual builder mode is enabled with metadata, create mock resolved targets without calling Plex
+  if (testOptions?.manualBuilderConfig?.enabled) {
+    for (const target of targetsToResolve) {
+      // Create a mock resolved target using hardcoded metadata
+      const mockResolved: ResolvedTarget = {
+        ...target,
+        ratingKey: `mock-${target.id}`,
+        actualTitle: target.label.split(' — ')[0], // Extract title from label
+        thumbPath: '',  // No thumb needed for manual mode
+        warnings: [],
+      };
+      results.push(mockResolved);
+    }
+    return results;
+  }
 
   // Cache for Breaking Bad show to avoid repeated searches
   let breakingBadShow: PlexMediaItem | null = null;

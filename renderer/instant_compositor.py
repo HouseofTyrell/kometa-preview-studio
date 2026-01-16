@@ -103,37 +103,64 @@ MAX_COMPOSITE_WORKERS = 4
 # ============================================================================
 # Font Caching - Avoid repeated font loading (saves ~150-250ms)
 # ============================================================================
-_font_cache: Dict[int, ImageFont.FreeTypeFont] = {}
-_font_paths = [
+_font_cache: Dict[Tuple[str, int], ImageFont.FreeTypeFont] = {}
+_default_font_paths = [
     '/fonts/Inter-Regular.ttf',
     '/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf',
     '/usr/share/fonts/TTF/DejaVuSans.ttf',
 ]
 
 
-def _get_cached_font(font_size: int = 40) -> ImageFont.FreeTypeFont:
+def _get_cached_font(font_size: int = 40, custom_font_path: Optional[str] = None) -> ImageFont.FreeTypeFont:
     """
-    Get a cached font instance for the given size.
+    Get a cached font instance for the given size and optional custom font path.
 
     Fonts are expensive to load from disk. This function caches fonts
-    by size to avoid repeated loading across badge creations.
+    by (path, size) tuple to avoid repeated loading across badge creations.
+
+    Args:
+        font_size: Size of the font in points
+        custom_font_path: Optional path to a custom font file (e.g., 'config/fonts/Adlib.ttf')
+                         If provided, will check both /user_config/ and current directory
     """
-    if font_size in _font_cache:
-        return _font_cache[font_size]
+    cache_key = (custom_font_path or 'default', font_size)
+
+    if cache_key in _font_cache:
+        return _font_cache[cache_key]
 
     font = None
-    try:
-        for fp in _font_paths:
-            if Path(fp).exists():
-                font = ImageFont.truetype(fp, font_size)
-                break
-    except Exception:
-        pass
+
+    # Try custom font first if specified
+    if custom_font_path:
+        custom_paths = [
+            f'/user_config/{custom_font_path}',  # User's Kometa config directory
+            f'/{custom_font_path}',              # Absolute path
+            custom_font_path,                     # Relative path
+        ]
+
+        try:
+            for fp in custom_paths:
+                if Path(fp).exists():
+                    font = ImageFont.truetype(fp, font_size)
+                    print(f"Loaded custom font: {fp} at size {font_size}")
+                    break
+        except Exception as e:
+            print(f"Warning: Failed to load custom font {custom_font_path}: {e}")
+
+    # Fall back to default fonts
+    if font is None:
+        try:
+            for fp in _default_font_paths:
+                if Path(fp).exists():
+                    font = ImageFont.truetype(fp, font_size)
+                    break
+        except Exception:
+            pass
 
     if font is None:
         font = ImageFont.load_default()
 
-    _font_cache[font_size] = font
+    _font_cache[cache_key] = font
     return font
 
 
@@ -726,8 +753,21 @@ def create_ratings_overlay(
     return result
 
 
-def _create_single_rating_badge(source: str, value: str, font_size: int = 63) -> Optional[Image.Image]:
-    """Create a single rating badge with logo and value matching Kometa dimensions."""
+def _create_single_rating_badge(
+    source: str,
+    value: str,
+    font_size: int = 63,
+    custom_font_path: Optional[str] = None
+) -> Optional[Image.Image]:
+    """
+    Create a single rating badge with logo and value matching Kometa dimensions.
+
+    Args:
+        source: Rating source identifier (e.g., 'imdb', 'tmdb', 'rt_critics')
+        value: Rating value to display
+        font_size: Font size in points
+        custom_font_path: Optional path to custom font (e.g., 'config/fonts/Impact.ttf')
+    """
     # Kometa default dimensions for vertical alignment (square badges)
     badge_width = 160
     badge_height = 160
@@ -767,8 +807,8 @@ def _create_single_rating_badge(source: str, value: str, font_size: int = 63) ->
         badge.paste(logo, (logo_x, current_y), logo)
         current_y += logo.height + 10
 
-    # Add rating value text with custom font size (from user config)
-    font = _get_cached_font(font_size)
+    # Add rating value text with custom font size and optional custom font
+    font = _get_cached_font(font_size, custom_font_path)
     text_bbox = draw.textbbox((0, 0), value, font=font)
     text_width = text_bbox[2] - text_bbox[0]
     text_height = text_bbox[3] - text_bbox[1]
@@ -858,13 +898,66 @@ def create_hdr_overlay_png(hdr: bool = False, dolby_vision: bool = False) -> Opt
     return create_hdr_badge(hdr, dolby_vision)
 
 
+def _extract_rating_fonts_from_config(config: Dict[str, Any], library_name: str) -> Dict[str, Tuple[int, str]]:
+    """
+    Extract rating font configurations from Kometa config.
+
+    Returns a dict mapping rating number to (font_size, font_path) tuple:
+    {
+        'rating1': (63, 'config/fonts/Adlib.ttf'),
+        'rating2': (70, 'config/fonts/Impact.ttf'),
+        'rating3': (70, 'config/fonts/Avenir_95_Black.ttf'),
+    }
+    """
+    font_config = {}
+
+    libraries = config.get('libraries', {})
+    if not isinstance(libraries, dict):
+        return font_config
+
+    lib_config = libraries.get(library_name)
+    if not isinstance(lib_config, dict):
+        return font_config
+
+    overlay_files = lib_config.get('overlay_files', [])
+    if not isinstance(overlay_files, list):
+        return font_config
+
+    # Find the ratings overlay entry
+    for entry in overlay_files:
+        if not isinstance(entry, dict):
+            continue
+
+        if entry.get('default') == 'ratings':
+            template_vars = entry.get('template_variables', {})
+            if not isinstance(template_vars, dict):
+                continue
+
+            # Extract font configs for rating1, rating2, rating3
+            for i in range(1, 4):
+                rating_key = f'rating{i}'
+                font_size_key = f'rating{i}_font_size'
+                font_path_key = f'rating{i}_font'
+
+                font_size = template_vars.get(font_size_key, 63)  # Default to 63
+                font_path = template_vars.get(font_path_key)
+
+                if font_path:
+                    font_config[rating_key] = (int(font_size), font_path)
+
+            break
+
+    return font_config
+
+
 def composite_overlays(
     input_path: Path,
     output_path: Path,
     metadata: Dict[str, Any],
     target_type: str,
     use_png_assets: bool = True,
-    overlay_positions: Optional[Dict[str, Dict[str, Any]]] = None
+    overlay_positions: Optional[Dict[str, Dict[str, Any]]] = None,
+    rating_fonts: Optional[Dict[str, Tuple[int, str]]] = None
 ) -> bool:
     """
     Composite overlay badges onto a poster image.
@@ -876,6 +969,7 @@ def composite_overlays(
         target_type: Type of item (movie, show, season, episode)
         use_png_assets: Whether to use PNG assets from Kometa (default: True)
         overlay_positions: Optional dict of overlay positioning configs from Kometa config
+        rating_fonts: Optional dict of rating font configs (rating1/2/3 -> (size, path))
 
     Returns:
         True if successful, False otherwise
@@ -1011,20 +1105,23 @@ def composite_overlays(
                 img.paste(studio_overlay, (x, y), studio_overlay)
 
         # Ratings - Kometa stacks them vertically with center rating at vertical center
-        # Font sizes from user config: RT=63, IMDb=70, TMDb=70
+        # Build ratings data with custom fonts from config if available
         ratings_data = []
         if metadata.get('rtRating'):
-            ratings_data.append(('rt_critics', f"{metadata.get('rtRating')}%", 63))
+            font_size, font_path = rating_fonts.get('rating1', (63, None)) if rating_fonts else (63, None)
+            ratings_data.append(('rt_critics', f"{metadata.get('rtRating')}%", font_size, font_path))
         if metadata.get('imdbRating'):
-            ratings_data.append(('imdb', f"{metadata.get('imdbRating'):.1f}", 70))
+            font_size, font_path = rating_fonts.get('rating2', (70, None)) if rating_fonts else (70, None)
+            ratings_data.append(('imdb', f"{metadata.get('imdbRating'):.1f}", font_size, font_path))
         if metadata.get('tmdbRating'):
-            ratings_data.append(('tmdb', f"{metadata.get('tmdbRating'):.1f}", 70))
+            font_size, font_path = rating_fonts.get('rating3', (70, None)) if rating_fonts else (70, None)
+            ratings_data.append(('tmdb', f"{metadata.get('tmdbRating'):.1f}", font_size, font_path))
 
         if ratings_data:
-            # Create individual rating badges
+            # Create individual rating badges with custom fonts
             rating_badges = []
-            for source, value, font_size in ratings_data[:3]:  # Limit to 3 ratings
-                badge = _create_single_rating_badge(source, value, font_size)
+            for source, value, font_size, font_path in ratings_data[:3]:  # Limit to 3 ratings
+                badge = _create_single_rating_badge(source, value, font_size, font_path)
                 if badge:
                     rating_badges.append(badge)
 
@@ -1132,7 +1229,8 @@ def _composite_target(
     target: Dict[str, Any],
     job_path: Path,
     draft_dir: Path,
-    overlay_positions: Optional[Dict[str, Dict[str, Any]]] = None
+    overlay_positions: Optional[Dict[str, Dict[str, Any]]] = None,
+    rating_fonts: Optional[Dict[str, Tuple[int, str]]] = None
 ) -> Tuple[str, bool]:
     """
     Composite a single target (used for parallel processing).
@@ -1151,7 +1249,11 @@ def _composite_target(
     input_path = get_input_image_path(job_path, target_id)
     output_path = draft_dir / f"{target_id}_draft.png"
 
-    success = composite_overlays(input_path, output_path, metadata, target_type, overlay_positions=overlay_positions)
+    success = composite_overlays(
+        input_path, output_path, metadata, target_type,
+        overlay_positions=overlay_positions,
+        rating_fonts=rating_fonts
+    )
     return (target_id, success)
 
 
@@ -1231,8 +1333,10 @@ def run_manual_preview(
     if enabled_ribbons:
         print(f"Enabled ribbons: {enabled_ribbons}")
 
-    # Parse overlay positions from config
+    # Parse overlay positions and rating fonts from config
     overlay_positions: Dict[str, Dict[str, Any]] = {}
+    rating_fonts: Dict[str, Tuple[int, str]] = {}
+
     if HAS_POSITIONING:
         # Determine library name based on target types
         has_tv = any(t.get('type') in ['show', 'season', 'episode'] for t in valid_targets)
@@ -1251,6 +1355,17 @@ def run_manual_preview(
             print(f"Warning: Failed to parse overlay positions: {e}")
             overlay_positions = {}
 
+        # Extract rating font configurations
+        try:
+            rating_fonts = _extract_rating_fonts_from_config(config, library_name)
+            if rating_fonts:
+                print(f"Loaded custom rating fonts:")
+                for key, (size, path) in rating_fonts.items():
+                    print(f"  {key}: {path} @ {size}pt")
+        except Exception as e:
+            print(f"Warning: Failed to extract rating fonts: {e}")
+            rating_fonts = {}
+
     success_count = 0
 
     # Process targets with filtered metadata
@@ -1262,7 +1377,8 @@ def run_manual_preview(
                 job_path,
                 draft_dir,
                 manual_overlays,
-                overlay_positions
+                overlay_positions,
+                rating_fonts
             ): target
             for target in valid_targets
         }
@@ -1294,7 +1410,8 @@ def _composite_manual_target(
     job_path: Path,
     draft_dir: Path,
     manual_overlays: Dict[str, Any],
-    overlay_positions: Optional[Dict[str, Dict[str, Any]]] = None
+    overlay_positions: Optional[Dict[str, Dict[str, Any]]] = None,
+    rating_fonts: Optional[Dict[str, Tuple[int, str]]] = None
 ) -> Tuple[str, bool]:
     """
     Composite a single target with manual overlay selections.
@@ -1365,7 +1482,11 @@ def _composite_manual_target(
     input_path = get_input_image_path(job_path, target_id)
     output_path = draft_dir / f"{target_id}_draft.png"
 
-    success = composite_overlays(input_path, output_path, filtered_metadata, target_type, overlay_positions=overlay_positions)
+    success = composite_overlays(
+        input_path, output_path, filtered_metadata, target_type,
+        overlay_positions=overlay_positions,
+        rating_fonts=rating_fonts
+    )
     return (target_id, success)
 
 
@@ -1423,8 +1544,10 @@ def run_instant_preview(job_path: Path) -> int:
     print(f"Processing {len(valid_targets)} targets in parallel "
           f"(max {MAX_COMPOSITE_WORKERS} workers)...")
 
-    # Parse overlay positions from config
+    # Parse overlay positions and rating fonts from config
     overlay_positions: Dict[str, Dict[str, Any]] = {}
+    rating_fonts: Dict[str, Tuple[int, str]] = {}
+
     if HAS_POSITIONING:
         # Determine library name based on target types
         has_tv = any(t.get('type') in ['show', 'season', 'episode'] for t in valid_targets)
@@ -1440,13 +1563,24 @@ def run_instant_preview(job_path: Path) -> int:
             print(f"Warning: Failed to parse overlay positions: {e}")
             overlay_positions = {}
 
+        # Extract rating font configurations
+        try:
+            rating_fonts = _extract_rating_fonts_from_config(config, library_name)
+            if rating_fonts:
+                print(f"Loaded custom rating fonts:")
+                for key, (size, path) in rating_fonts.items():
+                    print(f"  {key}: {path} @ {size}pt")
+        except Exception as e:
+            print(f"Warning: Failed to extract rating fonts: {e}")
+            rating_fonts = {}
+
     success_count = 0
     results: List[Tuple[str, bool]] = []
 
     # Process targets in parallel using ThreadPoolExecutor
     with ThreadPoolExecutor(max_workers=MAX_COMPOSITE_WORKERS) as executor:
         futures = {
-            executor.submit(_composite_target, target, job_path, draft_dir, overlay_positions): target
+            executor.submit(_composite_target, target, job_path, draft_dir, overlay_positions, rating_fonts): target
             for target in valid_targets
         }
 

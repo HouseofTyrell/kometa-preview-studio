@@ -53,6 +53,9 @@ router.post('/start', async (req: Request, res: Response) => {
       ? { ...DEFAULT_TEST_OPTIONS, ...testOptions }
       : DEFAULT_TEST_OPTIONS;
 
+    // Debug: Log manual builder config
+    console.log('Preview start - manual builder config:', JSON.stringify(options.manualBuilderConfig, null, 2));
+
     // Create job with test options
     const jobManager = getJobManager();
     const jobId = await jobManager.createJob(configYaml, options);

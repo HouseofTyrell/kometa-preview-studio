@@ -89,20 +89,26 @@ class JobManager extends EventEmitter {
     const jobId = uuidv4();
     const paths = getJobPaths(jobId);
 
+    console.log('createJob called with manual mode:', testOptions?.manualBuilderConfig?.enabled);
+
     // Parse and validate config
     const parseResult = parseYaml(configYaml);
     if (parseResult.error || !parseResult.parsed) {
+      console.error('Config parse error:', parseResult.error);
       throw new Error(`Invalid config: ${parseResult.error}`);
     }
 
     const config = parseResult.parsed as KometaConfig;
     const analysis = analyzeConfig(config);
 
-    // Check for Plex connection - validate and extract for type safety
-    const plexUrl = analysis.plexUrl;
-    const plexToken = config.plex?.token;
-    if (!plexUrl || !plexToken) {
-      throw new Error('Plex URL and token are required in config');
+    // Skip Plex validation in manual mode
+    if (!testOptions?.manualBuilderConfig?.enabled) {
+      // Check for Plex connection - validate and extract for type safety
+      const plexUrl = analysis.plexUrl;
+      const plexToken = config.plex?.token;
+      if (!plexUrl || !plexToken) {
+        throw new Error('Plex URL and token are required in config');
+      }
     }
 
     // Create job directories
@@ -164,18 +170,25 @@ class JobManager extends EventEmitter {
     try {
       // Update status to running
       await this.updateJobStatus(jobId, 'running', 5);
-      this.emit(`job:${jobId}`, {
-        type: 'progress',
-        timestamp: new Date(),
-        message: 'Connecting to Plex...',
-        data: { progress: 5 },
-      });
 
-      // Validate required Plex configuration
-      const plexUrl = analysis.plexUrl;
-      const plexToken = config.plex?.token;
-      if (!plexUrl || !plexToken) {
-        throw new Error('Plex URL and token are required in config');
+      // Check if manual builder mode is enabled
+      const isManualMode = testOptions.manualBuilderConfig?.enabled;
+
+      // Skip Plex connection in manual mode (uses hardcoded metadata)
+      if (!isManualMode) {
+        this.emit(`job:${jobId}`, {
+          type: 'progress',
+          timestamp: new Date(),
+          message: 'Connecting to Plex...',
+          data: { progress: 5 },
+        });
+
+        // Validate required Plex configuration
+        const plexUrl = analysis.plexUrl;
+        const plexToken = config.plex?.token;
+        if (!plexUrl || !plexToken) {
+          throw new Error('Plex URL and token are required in config');
+        }
       }
 
       // Create Plex client
@@ -184,18 +197,26 @@ class JobManager extends EventEmitter {
       // of 60 seconds, causing immediate timeouts when searching for movies in Plex.
       // This bug caused all Plex searches to fail with "Plex request timeout" errors.
       const plexClient = new PlexClient({
-        url: plexUrl,
-        token: plexToken,
+        url: analysis.plexUrl || 'http://localhost:32400',
+        token: config.plex?.token || 'dummy-token',
         timeout: config.plex?.timeout ? config.plex.timeout * 1000 : undefined,
       });
 
-      // Test connection
-      await plexClient.testConnection();
-      this.emit(`job:${jobId}`, {
-        type: 'log',
-        timestamp: new Date(),
-        message: 'Plex connection successful',
-      });
+      // Test connection only if not in manual mode
+      if (!isManualMode) {
+        await plexClient.testConnection();
+        this.emit(`job:${jobId}`, {
+          type: 'log',
+          timestamp: new Date(),
+          message: 'Plex connection successful',
+        });
+      } else {
+        this.emit(`job:${jobId}`, {
+          type: 'log',
+          timestamp: new Date(),
+          message: 'Manual mode enabled - using hardcoded metadata',
+        });
+      }
 
       // Resolve targets (filtered by test options)
       await this.updateJobStatus(jobId, 'running', 15);

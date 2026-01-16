@@ -1,0 +1,40 @@
+.advanced-configurator {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+}
+
+.advanced-header {
+  padding: var(--spacing-md, 1rem);
+  background: var(--bg-secondary, #f5f5f5);
+  border-bottom: 1px solid var(--border-color, #e0e0e0);
+}
+
+.advanced-header h4 {
+  margin: 0 0 var(--spacing-xs, 0.25rem) 0;
+  font-size: 0.875rem;
+  font-weight: 600;
+  color: var(--text-primary, #1a1a1a);
+}
+
+.advanced-description {
+  margin: 0;
+  font-size: 0.75rem;
+  color: var(--text-muted, #666);
+}
+
+/* Dark mode support */
+@media (prefers-color-scheme: dark) {
+  .advanced-header {
+    background: var(--bg-secondary, #2a2a2a);
+    border-color: var(--border-color, #333);
+  }
+
+  .advanced-header h4 {
+    color: var(--text-primary, #f5f5f5);
+  }
+
+  .advanced-description {
+    color: var(--text-muted, #999);
+  }
+}

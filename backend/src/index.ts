@@ -8,6 +8,9 @@ import previewStartRouter from './api/previewStart.js';
 import previewStatusRouter from './api/previewStatus.js';
 import previewArtifactsRouter from './api/previewArtifacts.js';
 import systemControlRouter from './api/systemControl.js';
+import builderRouter from './api/builderApi.js';
+import communityRouter from './api/communityApi.js';
+import sharingRouter from './api/sharingApi.js';
 import { ensureDir } from './util/safeFs.js';
 import { getJobsBasePath, getFontsPath } from './jobs/paths.js';
 import { DEFAULT_PORT, DEFAULT_HOST, DEFAULT_CORS_ORIGIN } from './constants.js';
@@ -80,6 +83,9 @@ async function main() {
   app.use('/api/preview', previewStartRouter);
   app.use('/api/preview', previewStatusRouter);
   app.use('/api/preview', previewArtifactsRouter);
+  app.use('/api/builder', builderRouter);
+  app.use('/api/community', communityRouter);
+  app.use('/api/share', sharingRouter);
   app.use('/api', systemControlRouter);
 
   // Error handling middleware

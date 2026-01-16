@@ -438,3 +438,309 @@ export async function runSystemAction(action: SystemAction): Promise<SystemActio
 
   return response.json();
 }
+
+/**
+ * Builder API - Get overlay configurations from profile
+ */
+export async function getBuilderOverlays(profileId: string): Promise<{
+  profileId: string;
+  overlaysByLibrary: Record<string, Array<string | Record<string, unknown>>>;
+  libraryNames: string[];
+}> {
+  const response = await fetch(`${API_BASE}/builder/overlays/${profileId}`);
+
+  if (!response.ok) {
+    const error = await response.json();
+    throw new Error(error.details || error.error || 'Failed to get overlays');
+  }
+
+  return response.json();
+}
+
+/**
+ * Builder API - Save overlay configurations to profile
+ */
+export async function saveBuilderOverlays(
+  profileId: string,
+  overlaysByLibrary: Record<string, Array<string | Record<string, unknown>>>
+): Promise<{ success: boolean; profileId: string; message: string }> {
+  const response = await fetch(`${API_BASE}/builder/overlays/${profileId}`, {
+    method: 'PUT',
+    headers: {
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify({ overlaysByLibrary }),
+  });
+
+  if (!response.ok) {
+    const error = await response.json();
+    throw new Error(error.details || error.error || 'Failed to save overlays');
+  }
+
+  return response.json();
+}
+
+/**
+ * Builder API - Export builder configuration
+ */
+export async function exportBuilderConfig(config: {
+  enabledOverlays: Record<string, boolean>;
+  selectedPreset: string | null;
+  advancedOverlays: unknown[];
+  advancedQueues: unknown[];
+}): Promise<unknown> {
+  const response = await fetch(`${API_BASE}/builder/export`, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify(config),
+  });
+
+  if (!response.ok) {
+    const error = await response.json();
+    throw new Error(error.details || error.error || 'Failed to export config');
+  }
+
+  return response.json();
+}
+
+/**
+ * Builder API - Import and validate builder configuration
+ */
+export async function importBuilderConfig(data: unknown): Promise<{
+  valid: boolean;
+  data: {
+    enabledOverlays: Record<string, boolean>;
+    selectedPreset: string;
+    advancedOverlays: unknown[];
+    advancedQueues: unknown[];
+  };
+}> {
+  const response = await fetch(`${API_BASE}/builder/import`, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify(data),
+  });
+
+  if (!response.ok) {
+    const error = await response.json();
+    throw new Error(error.details || error.error || 'Failed to import config');
+  }
+
+  return response.json();
+}
+
+// ============================================================================
+// Community Configs API
+// ============================================================================
+
+export interface CommunityContributor {
+  username: string;
+  path: string;
+  configCount: number;
+}
+
+export interface CommunityConfig {
+  name: string;
+  path: string;
+  downloadUrl?: string;
+  size: number;
+}
+
+/**
+ * Get list of all community contributors
+ */
+export async function getCommunityContributors(): Promise<{
+  contributors: CommunityContributor[];
+  total: number;
+  cached?: boolean;
+}> {
+  const response = await fetch(`${API_BASE}/community/contributors-with-overlays`);
+
+  if (!response.ok) {
+    const error = await response.json().catch(() => ({ error: 'Failed to fetch contributors' }));
+    throw new Error(error.details || error.error || 'Failed to fetch contributors');
+  }
+
+  return response.json();
+}
+
+/**
+ * Get configs from a specific contributor
+ */
+export async function getContributorConfigs(username: string): Promise<{
+  username: string;
+  configs: CommunityConfig[];
+  total: number;
+}> {
+  const response = await fetch(`${API_BASE}/community/contributor/${username}`);
+
+  if (!response.ok) {
+    const error = await response.json().catch(() => ({ error: 'Failed to fetch contributor configs' }));
+    throw new Error(error.details || error.error || 'Failed to fetch contributor configs');
+  }
+
+  return response.json();
+}
+
+/**
+ * Get raw config file content from a community contributor
+ */
+export async function getCommunityConfig(
+  username: string,
+  filename: string
+): Promise<{
+  username: string;
+  filename: string;
+  content: string;
+  url: string;
+}> {
+  const response = await fetch(`${API_BASE}/community/config/${username}/${filename}`);
+
+  if (!response.ok) {
+    const error = await response.json().catch(() => ({ error: 'Failed to fetch config' }));
+    throw new Error(error.details || error.error || 'Failed to fetch config');
+  }
+
+  return response.json();
+}
+
+/**
+ * Parse overlay configurations from YAML content
+ */
+export async function parseCommunityOverlays(yamlContent: string): Promise<{
+  success: boolean;
+  overlays: string[];
+  libraryCount: number;
+}> {
+  const response = await fetch(`${API_BASE}/community/parse-overlays`, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify({ yamlContent }),
+  });
+
+  if (!response.ok) {
+    const error = await response.json().catch(() => ({ error: 'Failed to parse overlays' }));
+    throw new Error(error.details || error.error || 'Failed to parse overlays');
+  }
+
+  return response.json();
+}
+
+// ============================================================================
+// Sharing API
+// ============================================================================
+
+export interface ShareMetadata {
+  title?: string;
+  description?: string;
+  author?: string;
+  createdAt?: string;
+}
+
+export interface ShareConfig {
+  enabledOverlays: Record<string, boolean>;
+  selectedPreset: string | null;
+  advancedOverlays: unknown[];
+  advancedQueues: unknown[];
+}
+
+export interface ShareResponse {
+  success: boolean;
+  shareId: string;
+  shareUrl: string;
+}
+
+export interface SharedConfigResponse {
+  success: boolean;
+  id: string;
+  config: ShareConfig;
+  metadata: ShareMetadata;
+}
+
+export interface GistResponse {
+  success: boolean;
+  gistId: string;
+  gistUrl: string;
+  rawUrl: string;
+}
+
+/**
+ * Create a shareable link for an overlay configuration
+ */
+export async function createShare(
+  config: ShareConfig,
+  metadata?: ShareMetadata
+): Promise<ShareResponse> {
+  const response = await fetch(`${API_BASE}/share/create`, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify({ config, metadata }),
+  });
+
+  if (!response.ok) {
+    const error = await response.json().catch(() => ({ error: 'Failed to create share' }));
+    throw new Error(error.details || error.error || 'Failed to create share');
+  }
+
+  return response.json();
+}
+
+/**
+ * Get a shared configuration by ID
+ */
+export async function getShare(shareId: string): Promise<SharedConfigResponse> {
+  const response = await fetch(`${API_BASE}/share/${shareId}`);
+
+  if (!response.ok) {
+    const error = await response.json().catch(() => ({ error: 'Failed to get share' }));
+    throw new Error(error.details || error.error || 'Failed to get share');
+  }
+
+  return response.json();
+}
+
+/**
+ * Export configuration to GitHub Gist
+ */
+export async function exportToGist(
+  config: ShareConfig,
+  metadata?: ShareMetadata,
+  githubToken?: string
+): Promise<GistResponse> {
+  const response = await fetch(`${API_BASE}/share/gist`, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify({ config, metadata, githubToken }),
+  });
+
+  if (!response.ok) {
+    const error = await response.json().catch(() => ({ error: 'Failed to create gist' }));
+    throw new Error(error.details || error.error || 'Failed to create gist');
+  }
+
+  return response.json();
+}
+
+/**
+ * Import configuration from GitHub Gist
+ */
+export async function importFromGist(gistId: string): Promise<SharedConfigResponse> {
+  const response = await fetch(`${API_BASE}/share/gist/${gistId}`);
+
+  if (!response.ok) {
+    const error = await response.json().catch(() => ({ error: 'Failed to import gist' }));
+    throw new Error(error.details || error.error || 'Failed to import gist');
+  }
+
+  return response.json();
+}

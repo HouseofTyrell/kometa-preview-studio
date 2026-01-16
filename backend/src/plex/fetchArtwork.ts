@@ -114,6 +114,22 @@ async function fetchTargetArtwork(
     };
   }
 
+  // 5. Generate placeholder for manual mode (when ratingKey is mock-*)
+  if (target.ratingKey && target.ratingKey.startsWith('mock-')) {
+    try {
+      await generatePlaceholderImage(target, localPath);
+      return {
+        targetId: target.id,
+        source: 'plex_current',
+        localPath,
+        warnings: [...warnings, 'Using generated placeholder image for manual mode preview'],
+      };
+    } catch (err) {
+      console.error(`Failed to generate placeholder for ${target.id}:`, err);
+      // Continue to no artwork fallback
+    }
+  }
+
   // No artwork available
   warnings.push(`No artwork available for ${target.label}`);
   return {
@@ -310,5 +326,45 @@ async function fetchTmdbPoster(
 
     default:
       return null;
+  }
+}
+
+/**
+ * Generate a placeholder image for manual mode
+ * Downloads a simple colored placeholder image
+ */
+async function generatePlaceholderImage(target: ResolvedTarget, outputPath: string): Promise<void> {
+  // Movie poster aspect ratio: 2:3 (600x900)
+  const width = 600;
+  const height = 900;
+
+  // Generate a darker color based on target ID (for variety)
+  const hash = target.id.split('').reduce((acc, char) => acc + char.charCodeAt(0), 0);
+  const colors = ['333333', '2d3748', '1e293b', '374151', '1f2937', '111827'];
+  const color = colors[hash % colors.length];
+
+  // Use placehold.co which has better dark color support
+  const text = encodeURIComponent(target.actualTitle || target.label);
+  const url = `https://placehold.co/${width}x${height}/${color}/cccccc/png?text=${text}`;
+
+  console.log(`Generating placeholder for ${target.id}: ${url}`);
+
+  try {
+    const response = await fetch(url);
+    if (!response.ok) {
+      throw new Error(`Failed to fetch placeholder: ${response.status}`);
+    }
+    const buffer = await response.arrayBuffer();
+    await fs.writeFile(outputPath, Buffer.from(buffer));
+    console.log(`Placeholder saved to ${outputPath}`);
+  } catch (err) {
+    console.error(`Failed to generate online placeholder, using fallback: ${err}`);
+    // If online placeholder fails, create a minimal solid color PNG
+    // This is a 1x1 pixel gray PNG as a last resort
+    const minimalPng = Buffer.from(
+      'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg==',
+      'base64'
+    );
+    await fs.writeFile(outputPath, minimalPng);
   }
 }
