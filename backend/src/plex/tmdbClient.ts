@@ -7,6 +7,7 @@
 
 import * as https from 'https';
 import { tmdbLogger } from '../util/logger.js';
+import { withRetry, isRetryableHttpError } from '../util/retry.js';
 
 const TMDB_API_BASE = 'https://api.themoviedb.org/3';
 const TMDB_IMAGE_BASE = 'https://image.tmdb.org/t/p/original';
@@ -30,12 +31,22 @@ export const KNOWN_TMDB_IDS: Record<string, { id: number; type: 'movie' | 'tv' }
 };
 
 /**
- * Make HTTPS request and return JSON response
+ * Make HTTPS request and return JSON response (internal, no retry)
  */
-function makeRequest<T>(url: string): Promise<T> {
+function makeRequestInternal<T>(url: string): Promise<T> {
   return new Promise((resolve, reject) => {
     https.get(url, (res) => {
       let data = '';
+
+      // Check for HTTP errors
+      if (res.statusCode && res.statusCode >= 400) {
+        res.on('data', (chunk: string) => { data += chunk; });
+        res.on('end', () => {
+          reject(new Error(`TMDb API error ${res.statusCode}: ${data.slice(0, 200)}`));
+        });
+        return;
+      }
+
       res.on('data', (chunk: string) => { data += chunk; });
       res.on('end', () => {
         try {
@@ -49,18 +60,40 @@ function makeRequest<T>(url: string): Promise<T> {
 }
 
 /**
- * Download image from URL
+ * Make HTTPS request with retry logic and exponential backoff
  */
-function downloadImage(url: string): Promise<Buffer> {
+function makeRequest<T>(url: string, context: string = 'tmdbRequest'): Promise<T> {
+  return withRetry(
+    () => makeRequestInternal<T>(url),
+    {
+      maxRetries: 3,
+      initialDelayMs: 1000,
+      maxDelayMs: 8000,
+      isRetryable: isRetryableHttpError,
+      context,
+    }
+  );
+}
+
+/**
+ * Download image from URL (internal, no retry)
+ */
+function downloadImageInternal(url: string): Promise<Buffer> {
   return new Promise((resolve, reject) => {
     https.get(url, (res) => {
       // Handle redirects
       if (res.statusCode === 301 || res.statusCode === 302) {
         const redirectUrl = res.headers.location;
         if (redirectUrl) {
-          downloadImage(redirectUrl).then(resolve).catch(reject);
+          downloadImageInternal(redirectUrl).then(resolve).catch(reject);
           return;
         }
+      }
+
+      // Check for HTTP errors
+      if (res.statusCode && res.statusCode >= 400) {
+        reject(new Error(`Image download failed: HTTP ${res.statusCode}`));
+        return;
       }
 
       const chunks: Buffer[] = [];
@@ -70,6 +103,22 @@ function downloadImage(url: string): Promise<Buffer> {
       });
     }).on('error', reject);
   });
+}
+
+/**
+ * Download image from URL with retry logic
+ */
+function downloadImage(url: string): Promise<Buffer> {
+  return withRetry(
+    () => downloadImageInternal(url),
+    {
+      maxRetries: 3,
+      initialDelayMs: 500,
+      maxDelayMs: 4000,
+      isRetryable: isRetryableHttpError,
+      context: 'tmdbImageDownload',
+    }
+  );
 }
 
 interface TmdbMovieResponse {

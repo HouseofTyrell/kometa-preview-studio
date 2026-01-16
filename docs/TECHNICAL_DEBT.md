@@ -246,7 +246,9 @@ Status:
 Consider for future:
 - Job queue (Bull/BullMQ) for background processing
 - Concurrent job limits
-- Retry logic with exponential backoff
+- ✅ Retry logic with exponential backoff - ADDED 2026-01-16
+  - Created `util/retry.ts` with `withRetry()` and `isRetryableHttpError()`
+  - TMDb client now retries on network errors and rate limiting
 
 ---
 
