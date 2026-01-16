@@ -296,21 +296,31 @@ Usage:
 - [ ] Job lifecycle
 - [ ] SSE event streaming
 
-### E2E Tests (Priority 3) - Future (P4)
-**Recommended: Playwright**
+### ✅ E2E Tests with Playwright (P4)
+**Status:** IMPLEMENTED
+**Resolution Date:** 2026-01-16
 
-Test scenarios to cover:
-- [ ] Full preview workflow (upload config → select target → view results)
-- [ ] Error scenarios (invalid config, network failures, job cancellation)
-- [ ] Browser compatibility (Chrome, Firefox, Safari)
-- [ ] Responsive design verification
+Test scenarios covered:
+- [x] Smoke tests (app loads, navigation, API health)
+- [x] Full preview workflow (upload config → select target → run job)
+- [x] Error scenarios (invalid config, network failures, API errors)
+- [x] Browser compatibility (Chrome, Firefox, Safari, Mobile Chrome)
+- [ ] Visual regression testing (optional, not yet configured)
 
-Implementation steps:
-1. Install `@playwright/test` and browser dependencies
-2. Create test fixtures for mock Plex server responses
-3. Write page objects for Config, Preview, and Results pages
-4. Add CI pipeline integration
-5. Configure visual regression testing (optional)
+Implementation:
+- Installed `@playwright/test` in frontend
+- Created `playwright.config.ts` with multi-browser support
+- Created page objects: `ConfigPage`, `PreviewPage`, `ResultsPage`
+- Created test files: `smoke.spec.ts`, `preview-workflow.spec.ts`, `error-scenarios.spec.ts`
+
+Usage:
+```bash
+cd frontend
+npm run test:e2e           # Run all E2E tests
+npm run test:e2e:ui        # Run with visual UI
+npm run test:e2e:headed    # Run with visible browser
+npx playwright install     # First-time: install browsers
+```
 
 ---
 
@@ -329,11 +339,12 @@ Implementation steps:
 | `express-rate-limit` | Rate limiting | ✅ Installed |
 | `bullmq` | Job queue | ✅ Installed |
 | `ioredis` | Redis client | ✅ Installed |
+| `@playwright/test` | E2E testing | ✅ Installed |
 
 ### Still Needed
 | Package | Purpose | Priority |
 |---------|---------|----------|
-| `@playwright/test` | E2E testing | P4 |
+| - | All major dependencies installed | - |
 
 ---
 
