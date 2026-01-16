@@ -220,4 +220,321 @@ router.post('/import', async (req: Request, res: Response) => {
   }
 });
 
+/**
+ * POST /api/builder/yaml/validate
+ * Validate YAML syntax and structure
+ */
+router.post('/yaml/validate', async (req: Request, res: Response) => {
+  try {
+    const { yaml } = req.body as { yaml: string };
+
+    if (!yaml || typeof yaml !== 'string') {
+      res.status(400).json({ error: 'YAML content is required' });
+      return;
+    }
+
+    const { parsed, error } = parseYaml(yaml);
+
+    if (error) {
+      res.json({
+        valid: false,
+        error,
+      });
+      return;
+    }
+
+    // Check for Kometa-specific structure
+    const config = parsed as KometaConfig;
+    const warnings: string[] = [];
+
+    if (!config.plex) {
+      warnings.push('Missing plex configuration section');
+    }
+
+    if (!config.libraries || Object.keys(config.libraries).length === 0) {
+      warnings.push('No libraries defined');
+    }
+
+    res.json({
+      valid: true,
+      warnings: warnings.length > 0 ? warnings : undefined,
+      libraries: config.libraries ? Object.keys(config.libraries) : [],
+    });
+
+  } catch (err) {
+    builderLogger.error({ err }, 'YAML validation error');
+    res.status(500).json({
+      error: 'Failed to validate YAML',
+      details: err instanceof Error ? err.message : 'Unknown error',
+    });
+  }
+});
+
+/**
+ * POST /api/builder/yaml/parse-overlays
+ * Parse YAML and extract overlay definitions
+ */
+router.post('/yaml/parse-overlays', async (req: Request, res: Response) => {
+  try {
+    const { yaml } = req.body as { yaml: string };
+
+    if (!yaml || typeof yaml !== 'string') {
+      res.status(400).json({ error: 'YAML content is required' });
+      return;
+    }
+
+    const { parsed, error } = parseYaml(yaml);
+
+    if (error || !parsed) {
+      res.status(400).json({
+        error: 'Invalid YAML',
+        details: error,
+      });
+      return;
+    }
+
+    // Check if this is an overlay file (has 'overlays' key)
+    const overlayFile = parsed as { overlays?: Record<string, unknown>; queues?: Record<string, unknown> };
+
+    if (overlayFile.overlays) {
+      // This is an overlay file
+      const overlayNames = Object.keys(overlayFile.overlays);
+      const queueNames = overlayFile.queues ? Object.keys(overlayFile.queues) : [];
+
+      res.json({
+        type: 'overlay_file',
+        overlayCount: overlayNames.length,
+        overlayNames,
+        queueCount: queueNames.length,
+        queueNames,
+        overlays: overlayFile.overlays,
+        queues: overlayFile.queues,
+      });
+      return;
+    }
+
+    // Check if this is a full Kometa config
+    const config = parsed as KometaConfig;
+
+    if (config.libraries) {
+      // Extract overlays from libraries
+      const overlaysByLibrary: Record<string, unknown[]> = {};
+
+      for (const [libName, libConfig] of Object.entries(config.libraries)) {
+        if (libConfig.overlay_files && Array.isArray(libConfig.overlay_files)) {
+          overlaysByLibrary[libName] = libConfig.overlay_files;
+        }
+      }
+
+      res.json({
+        type: 'kometa_config',
+        libraryCount: Object.keys(config.libraries).length,
+        libraryNames: Object.keys(config.libraries),
+        overlaysByLibrary,
+        hasPlexConfig: !!config.plex,
+        hasSettings: !!config.settings,
+      });
+      return;
+    }
+
+    // Unknown format
+    res.json({
+      type: 'unknown',
+      keys: Object.keys(parsed),
+    });
+
+  } catch (err) {
+    builderLogger.error({ err }, 'Parse overlays error');
+    res.status(500).json({
+      error: 'Failed to parse overlays',
+      details: err instanceof Error ? err.message : 'Unknown error',
+    });
+  }
+});
+
+/**
+ * POST /api/builder/yaml/generate-template
+ * Generate a Kometa config template
+ */
+router.post('/yaml/generate-template', async (req: Request, res: Response) => {
+  try {
+    const {
+      plexUrl,
+      plexToken,
+      libraries,
+      includeSettings = true,
+      includeTmdb = false,
+    } = req.body as {
+      plexUrl?: string;
+      plexToken?: string;
+      libraries?: Array<{ name: string; type: 'movie' | 'show' }>;
+      includeSettings?: boolean;
+      includeTmdb?: boolean;
+    };
+
+    const config: KometaConfig = {
+      plex: {
+        url: plexUrl || 'http://localhost:32400',
+        token: plexToken || 'YOUR_PLEX_TOKEN',
+        timeout: 60,
+      },
+      libraries: {},
+    };
+
+    // Add TMDb if requested
+    if (includeTmdb) {
+      config.tmdb = {
+        apikey: 'YOUR_TMDB_API_KEY',
+        language: 'en',
+        region: 'US',
+      };
+    }
+
+    // Add settings if requested
+    if (includeSettings) {
+      config.settings = {
+        cache: true,
+        cache_expiration: 60,
+        asset_directory: ['config/assets'],
+        asset_folders: true,
+        sync_mode: 'append',
+        show_unmanaged: true,
+        show_missing: true,
+      };
+    }
+
+    // Add libraries
+    const libraryList = libraries || [{ name: 'Movies', type: 'movie' as const }];
+
+    for (const lib of libraryList) {
+      const libConfig: LibraryConfig = {
+        name: lib.name,
+      };
+
+      // Add metadata_path based on type
+      const metadataType = lib.type === 'movie' ? 'movies' : 'shows';
+      libConfig.metadata_path = [`pmm: ${metadataType}`];
+
+      // Add placeholder overlay_files
+      libConfig.overlay_files = [
+        '# Add your overlay files here',
+        '# - pmm: resolution',
+        '# - pmm: audio_codec',
+        '# - file: config/overlays.yml',
+      ];
+
+      config.libraries![lib.name] = libConfig;
+    }
+
+    const yaml = stringifyYaml(config);
+
+    // Add header comment
+    const header = [
+      '# Kometa Configuration',
+      '# Generated by Kometa Preview Studio',
+      `# Generated: ${new Date().toISOString()}`,
+      '#',
+      '# Documentation: https://kometa.wiki/',
+      '',
+    ].join('\n');
+
+    res.json({
+      yaml: header + yaml,
+      libraryNames: libraryList.map(l => l.name),
+    });
+
+  } catch (err) {
+    builderLogger.error({ err }, 'Generate template error');
+    res.status(500).json({
+      error: 'Failed to generate template',
+      details: err instanceof Error ? err.message : 'Unknown error',
+    });
+  }
+});
+
+/**
+ * PUT /api/builder/yaml/:profileId
+ * Update a profile's raw YAML config
+ */
+router.put('/yaml/:profileId', async (req: Request, res: Response) => {
+  try {
+    const { profileId } = req.params;
+    const { yaml } = req.body as { yaml: string };
+
+    if (!yaml || typeof yaml !== 'string') {
+      res.status(400).json({ error: 'YAML content is required' });
+      return;
+    }
+
+    // Validate YAML first
+    const { parsed, error } = parseYaml(yaml);
+    if (error || !parsed) {
+      res.status(400).json({
+        error: 'Invalid YAML syntax',
+        details: error,
+      });
+      return;
+    }
+
+    const store = getProfileStore();
+    const profile = store.get(profileId);
+
+    if (!profile) {
+      res.status(404).json({ error: 'Profile not found' });
+      return;
+    }
+
+    // Update profile with new YAML
+    store.set(profileId, {
+      ...profile,
+      configYaml: yaml,
+      updatedAt: new Date().toISOString(),
+    });
+
+    res.json({
+      success: true,
+      profileId,
+      message: 'Config updated successfully',
+    });
+
+  } catch (err) {
+    builderLogger.error({ err }, 'Update YAML error');
+    res.status(500).json({
+      error: 'Failed to update config',
+      details: err instanceof Error ? err.message : 'Unknown error',
+    });
+  }
+});
+
+/**
+ * GET /api/builder/yaml/:profileId
+ * Get a profile's raw YAML config
+ */
+router.get('/yaml/:profileId', async (req: Request, res: Response) => {
+  try {
+    const { profileId } = req.params;
+
+    const store = getProfileStore();
+    const profile = store.get(profileId);
+
+    if (!profile) {
+      res.status(404).json({ error: 'Profile not found' });
+      return;
+    }
+
+    res.json({
+      profileId,
+      yaml: profile.configYaml,
+      updatedAt: profile.updatedAt,
+    });
+
+  } catch (err) {
+    builderLogger.error({ err }, 'Get YAML error');
+    res.status(500).json({
+      error: 'Failed to get config',
+      details: err instanceof Error ? err.message : 'Unknown error',
+    });
+  }
+});
+
 export default router;

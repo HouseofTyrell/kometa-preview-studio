@@ -15,6 +15,7 @@ export interface PlexConfig {
 export interface LibraryConfig {
   name: string;
   overlay_files?: Array<string | Record<string, unknown>>;
+  metadata_path?: Array<string | Record<string, unknown>>;
   operations?: Record<string, unknown>;
   collections?: Record<string, unknown>;
 }
