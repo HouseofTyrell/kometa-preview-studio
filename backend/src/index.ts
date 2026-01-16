@@ -16,7 +16,15 @@ import communityRouter from './api/communityApi.js';
 import sharingRouter from './api/sharingApi.js';
 import { ensureDir } from './util/safeFs.js';
 import { getJobsBasePath, getFontsPath } from './jobs/paths.js';
-import { DEFAULT_PORT, DEFAULT_HOST, DEFAULT_CORS_ORIGIN } from './constants.js';
+import {
+  DEFAULT_PORT,
+  DEFAULT_HOST,
+  DEFAULT_CORS_ORIGIN,
+  MAX_FILE_SIZE_BYTES,
+  MAX_JSON_SIZE,
+  RATE_LIMIT_WINDOW_MS,
+  RATE_LIMIT_MAX_REQUESTS,
+} from './constants.js';
 import { initializeProfileStore } from './storage/profileStore.js';
 import { getJobManager } from './jobs/jobManager.js';
 import { serverLogger, dockerLogger, apiLogger, logger } from './util/logger.js';
@@ -77,8 +85,8 @@ async function main() {
   // Rate limiting - generous limits for local development tool
   // Protects against runaway scripts but allows normal usage
   const apiLimiter = rateLimit({
-    windowMs: 60 * 1000, // 1 minute window
-    max: 200, // 200 requests per minute per IP
+    windowMs: RATE_LIMIT_WINDOW_MS,
+    max: RATE_LIMIT_MAX_REQUESTS,
     message: { error: 'Too many requests, please try again later.' },
     standardHeaders: true,
     legacyHeaders: false,
@@ -120,14 +128,14 @@ async function main() {
     },
   }));
 
-  app.use(express.json({ limit: '10mb' }));
-  app.use(express.urlencoded({ extended: true, limit: '10mb' }));
+  app.use(express.json({ limit: MAX_JSON_SIZE }));
+  app.use(express.urlencoded({ extended: true, limit: MAX_JSON_SIZE }));
 
   // Multer for file uploads
   const upload = multer({
     storage: multer.memoryStorage(),
     limits: {
-      fileSize: 10 * 1024 * 1024, // 10MB limit
+      fileSize: MAX_FILE_SIZE_BYTES,
     },
     fileFilter: (req, file, cb) => {
       // Accept YAML files

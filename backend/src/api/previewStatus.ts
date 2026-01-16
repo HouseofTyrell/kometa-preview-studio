@@ -1,6 +1,6 @@
 import { Router, Request, Response } from 'express';
 import { getJobManager } from '../jobs/jobManager.js';
-import { SSE_HEARTBEAT_INTERVAL_MS, SSE_CLOSE_DELAY_MS } from '../constants.js';
+import { SSE_HEARTBEAT_INTERVAL_MS, SSE_CLOSE_DELAY_MS, PAGINATION } from '../constants.js';
 import { PREVIEW_TARGETS } from '../plex/resolveTargets.js';
 import { apiLogger } from '../util/logger.js';
 
@@ -289,8 +289,8 @@ router.get('/jobs', async (req: Request, res: Response) => {
     const jobManager = getJobManager();
 
     // Parse pagination parameters
-    const page = Math.max(1, parseInt(req.query.page as string) || 1);
-    const limit = Math.min(100, Math.max(1, parseInt(req.query.limit as string) || 20));
+    const page = Math.max(PAGINATION.DEFAULT_PAGE, parseInt(req.query.page as string) || PAGINATION.DEFAULT_PAGE);
+    const limit = Math.min(PAGINATION.MAX_LIMIT, Math.max(PAGINATION.MIN_LIMIT, parseInt(req.query.limit as string) || PAGINATION.DEFAULT_LIMIT));
     const statusFilter = req.query.status as string | undefined;
 
     // Get all jobs (already sorted by createdAt descending)

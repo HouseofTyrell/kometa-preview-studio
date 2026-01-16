@@ -163,7 +163,10 @@ Frontend and backend now use consistent status values: `'pending' | 'running' | 
 - Default: 20 items per page, max: 100
 
 **Remaining:**
-- [ ] Update frontend to use pagination (currently fetches all)
+- [x] Update frontend to use pagination - RESOLVED 2026-01-16
+  - Updated `listJobs()` API function to accept pagination params
+  - Added `JobListParams` interface with page, limit, status options
+  - Added `PaginatedJobsResponse` type for typed responses
 
 ---
 
@@ -191,18 +194,28 @@ Frontend and backend now use consistent status values: `'pending' | 'running' | 
 
 ## Low Priority Issues
 
-### 13. Magic Numbers Remain
-**Priority:** LOW
-**Locations:** Various
+### ✅ 13. Magic Numbers Extracted to Constants
+**Status:** RESOLVED
+**Resolution Date:** 2026-01-16
 
-Some hardcoded values should be in constants:
-- Badge dimensions in `instant_compositor.py` (305, 105)
-- Poll intervals in frontend (2000ms)
+Backend constants extracted to `backend/src/constants.ts`:
+- `RATE_LIMIT_WINDOW_MS`, `RATE_LIMIT_MAX_REQUESTS` - API rate limiting
+- `PAGINATION` object - page, limit defaults and bounds
+- `RETRY_DEFAULTS` object - retry configuration
+- `TMDB_RETRY` object - TMDb API retry settings
+- `PROGRESS` object - job progress milestones (5, 10, 15, 30, 45, 50, 75, 90, 100)
+- `QUEUE_CONFIG` object - BullMQ queue settings
+- `CACHE_CONTROL` object - HTTP cache ages
+- `CONTAINER_STOP_TIMEOUT_SECONDS` - Docker container timeout
 
-**Action Items:**
-- [ ] Audit for remaining magic numbers
-- [ ] Extract to constants files
-- [ ] Document units in names
+Frontend constants created in `frontend/src/constants.ts`:
+- `DEBOUNCE_MS` object - autosave, search debounce values
+- `MESSAGE_TIMEOUT_MS` object - error, success, info message timeouts
+- `POLLING_INTERVAL_MS` object - job status, expiry update intervals
+- `ZOOM` object - min, max, step, default zoom values
+- `UNDO_HISTORY` object - max undo stack size
+- `TIME` object - profile expiry warnings, time conversions
+- `PAGINATION` object - default page and limit
 
 ---
 
@@ -291,10 +304,18 @@ Usage:
 - ✅ Business logic: `resolveTargets.ts`, `configGenerator.ts`
 - ✅ Plex client (`plexClient.test.ts` with mocked HTTP) - ADDED 2026-01-16
 
-### Integration Tests (Priority 2)
-- [ ] API endpoint contracts
-- [ ] Job lifecycle
-- [ ] SSE event streaming
+### ✅ Integration Tests (Priority 2) - RESOLVED 2026-01-16
+- [x] API endpoint contracts - `api.test.ts` (26 tests)
+  - Health, targets, jobs pagination, status, artifacts
+  - Config upload/retrieval, job control endpoints
+- [x] Job lifecycle - `job-lifecycle.test.ts` (52 tests)
+  - State machine transitions, progress updates
+  - Event emissions, repository operations
+  - Complete lifecycle scenarios (success, pause/resume, cancel, failure)
+- [x] SSE event streaming - `sse-events.test.ts` (21 tests)
+  - Event formatting, connection lifecycle
+  - Full job lifecycle events, concurrent connections
+  - Helper functions (safeSSEWrite, parseSSEEvents)
 
 ### ✅ E2E Tests with Playwright (P4)
 **Status:** IMPLEMENTED
@@ -350,11 +371,13 @@ npx playwright install     # First-time: install browsers
 
 ## Quick Wins Remaining
 
-1. [ ] Add request logging middleware
-2. [ ] Verify error boundary coverage
+1. [x] Add request logging middleware (RESOLVED 2026-01-16 - pino-http)
+2. [x] Verify error boundary coverage (VERIFIED 2026-01-16)
 3. [x] Add profile expiry to API response (RESOLVED 2026-01-16)
-4. [ ] Document Community/Sharing API status
+4. [x] Document Community/Sharing API status (RESOLVED 2026-01-16 - in README.md)
 5. [x] Add environment variable validation on startup (RESOLVED 2026-01-16)
+
+**All quick wins completed!**
 
 ---
 
