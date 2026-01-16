@@ -1,6 +1,7 @@
 import express from 'express';
 import cors from 'cors';
 import multer from 'multer';
+import pinoHttp from 'pino-http';
 import * as path from 'path';
 import configRouter from './api/configUpload.js';
 import plexRouter from './api/plexApi.js';
@@ -16,7 +17,7 @@ import { getJobsBasePath, getFontsPath } from './jobs/paths.js';
 import { DEFAULT_PORT, DEFAULT_HOST, DEFAULT_CORS_ORIGIN } from './constants.js';
 import { initializeProfileStore } from './storage/profileStore.js';
 import { getJobManager } from './jobs/jobManager.js';
-import { serverLogger, dockerLogger, apiLogger } from './util/logger.js';
+import { serverLogger, dockerLogger, apiLogger, logger } from './util/logger.js';
 import { validateEnvironmentOrExit, logEnvironmentConfig } from './util/envValidation.js';
 
 // Load environment variables from process.env (with constants as defaults)
@@ -53,6 +54,40 @@ async function main() {
   app.use(cors({
     origin: CORS_ORIGIN,
     credentials: true,
+  }));
+
+  // Request logging middleware
+  app.use(pinoHttp({
+    logger,
+    // Don't log health checks to reduce noise
+    autoLogging: {
+      ignore: (req) => req.url === '/api/health',
+    },
+    // Customize serializers to avoid logging sensitive data
+    serializers: {
+      req: (req) => ({
+        method: req.method,
+        url: req.url,
+        // Don't log headers that might contain tokens
+      }),
+      res: (res) => ({
+        statusCode: res.statusCode,
+      }),
+    },
+    // Custom log level based on status code
+    customLogLevel: (req, res, err) => {
+      if (res.statusCode >= 500 || err) return 'error';
+      if (res.statusCode >= 400) return 'warn';
+      return 'info';
+    },
+    // Custom success message
+    customSuccessMessage: (req, res) => {
+      return `${req.method} ${req.url} completed`;
+    },
+    // Custom error message
+    customErrorMessage: (req, res, err) => {
+      return `${req.method} ${req.url} failed: ${err.message}`;
+    },
   }));
 
   app.use(express.json({ limit: '10mb' }));

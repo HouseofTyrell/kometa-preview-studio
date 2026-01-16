@@ -110,7 +110,7 @@ Frontend and backend now use consistent status values: `'pending' | 'running' | 
 - All logs now include structured context for better observability
 
 **Remaining Low Priority:**
-- [ ] Add request logging middleware
+- [x] Add request logging middleware (RESOLVED 2026-01-16 - pino-http)
 - [ ] Configure log aggregation for production
 
 ---
