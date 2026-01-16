@@ -2,7 +2,7 @@ import { jest } from '@jest/globals';
 import * as http from 'http';
 import * as https from 'https';
 import { EventEmitter } from 'events';
-import { PlexClient, PlexMediaItem } from '../plex/plexClient.js';
+import { PlexClient } from '../plex/plexClient.js';
 
 // Mock response helper
 class MockResponse extends EventEmitter {
@@ -35,14 +35,12 @@ class MockRequest extends EventEmitter {
   }
 }
 
-// Store the original modules
-const originalHttpRequest = http.request;
-const originalHttpsRequest = https.request;
-
 describe('PlexClient', () => {
   let client: PlexClient;
   let mockRequest: MockRequest;
   let mockResponse: MockResponse;
+  let httpRequestSpy: jest.Mock;
+  let httpsRequestSpy: jest.Mock;
 
   beforeEach(() => {
     client = new PlexClient({
@@ -54,53 +52,50 @@ describe('PlexClient', () => {
     mockRequest = new MockRequest();
     mockResponse = new MockResponse(200);
 
+    // Create mock functions
+    const createMockRequest = (response: MockResponse) => {
+      return jest.fn().mockImplementation((...args: unknown[]) => {
+        const callback = args.find(arg => typeof arg === 'function') as ((res: unknown) => void) | undefined;
+        if (callback) {
+          // Call callback asynchronously to simulate network
+          setImmediate(() => callback(response));
+        }
+        return mockRequest;
+      });
+    };
+
     // Mock http.request
-    (http.request as jest.Mock) = jest.fn((url, options, callback) => {
-      if (callback) {
-        // Call callback asynchronously to simulate network
-        setImmediate(() => callback(mockResponse));
-      }
-      return mockRequest;
-    });
+    httpRequestSpy = createMockRequest(mockResponse);
+    jest.spyOn(http, 'request').mockImplementation(httpRequestSpy as unknown as typeof http.request);
 
     // Mock https.request for HTTPS URLs
-    (https.request as jest.Mock) = jest.fn((url, options, callback) => {
-      if (callback) {
-        setImmediate(() => callback(mockResponse));
-      }
-      return mockRequest;
-    });
+    httpsRequestSpy = createMockRequest(mockResponse);
+    jest.spyOn(https, 'request').mockImplementation(httpsRequestSpy as unknown as typeof https.request);
   });
 
   afterEach(() => {
-    jest.clearAllMocks();
-  });
-
-  afterAll(() => {
-    // Restore original implementations
-    (http.request as unknown) = originalHttpRequest;
-    (https.request as unknown) = originalHttpsRequest;
+    jest.restoreAllMocks();
   });
 
   describe('constructor', () => {
     it('should strip trailing slash from URL', () => {
-      const client = new PlexClient({
+      const testClient = new PlexClient({
         url: 'http://localhost:32400/',
         token: 'test-token',
       });
       // Verify by checking getArtworkUrl output
-      const artworkUrl = client.getArtworkUrl('/library/metadata/123/thumb');
+      const artworkUrl = testClient.getArtworkUrl('/library/metadata/123/thumb');
       expect(artworkUrl).toContain('http://localhost:32400/library');
       expect(artworkUrl).not.toContain('32400//');
     });
 
     it('should use default timeout of 30000ms', () => {
-      const client = new PlexClient({
+      const testClient = new PlexClient({
         url: 'http://localhost:32400',
         token: 'test-token',
       });
       // Client is created successfully with default timeout
-      expect(client).toBeDefined();
+      expect(testClient).toBeDefined();
     });
   });
 
@@ -149,7 +144,7 @@ describe('PlexClient', () => {
       await client.getLibrarySections();
 
       expect(http.request).toHaveBeenCalled();
-      const callArgs = (http.request as jest.Mock).mock.calls[0];
+      const callArgs = httpRequestSpy.mock.calls[0] as unknown[];
       const url = callArgs[0] as URL;
       expect(url.searchParams.get('X-Plex-Token')).toBe('test-token');
     });
@@ -181,8 +176,9 @@ describe('PlexClient', () => {
       };
 
       let callCount = 0;
-      (http.request as jest.Mock) = jest.fn((url, options, callback) => {
+      jest.spyOn(http, 'request').mockImplementation((...args: unknown[]) => {
         const response = new MockResponse(200);
+        const callback = args.find(arg => typeof arg === 'function') as ((res: unknown) => void) | undefined;
         if (callback) {
           setImmediate(() => {
             callback(response);
@@ -192,7 +188,7 @@ describe('PlexClient', () => {
             });
           });
         }
-        return mockRequest;
+        return mockRequest as unknown as http.ClientRequest;
       });
 
       const results = await client.searchMovies('Matrix');
@@ -220,8 +216,9 @@ describe('PlexClient', () => {
       };
 
       let callCount = 0;
-      (http.request as jest.Mock) = jest.fn((url, options, callback) => {
+      jest.spyOn(http, 'request').mockImplementation((...args: unknown[]) => {
         const response = new MockResponse(200);
+        const callback = args.find(arg => typeof arg === 'function') as ((res: unknown) => void) | undefined;
         if (callback) {
           setImmediate(() => {
             callback(response);
@@ -231,7 +228,7 @@ describe('PlexClient', () => {
             });
           });
         }
-        return mockRequest;
+        return mockRequest as unknown as http.ClientRequest;
       });
 
       const results = await client.searchMovies('Dune', 2021);
@@ -264,8 +261,9 @@ describe('PlexClient', () => {
       };
 
       let callCount = 0;
-      (http.request as jest.Mock) = jest.fn((url, options, callback) => {
+      jest.spyOn(http, 'request').mockImplementation((...args: unknown[]) => {
         const response = new MockResponse(200);
+        const callback = args.find(arg => typeof arg === 'function') as ((res: unknown) => void) | undefined;
         if (callback) {
           setImmediate(() => {
             callback(response);
@@ -275,7 +273,7 @@ describe('PlexClient', () => {
             });
           });
         }
-        return mockRequest;
+        return mockRequest as unknown as http.ClientRequest;
       });
 
       const results = await client.searchShows('Breaking Bad');
@@ -446,6 +444,15 @@ describe('PlexClient', () => {
   describe('error handling', () => {
     it('should reject on HTTP error status', async () => {
       mockResponse = new MockResponse(500);
+
+      // Update mock to use new response
+      jest.spyOn(http, 'request').mockImplementation((...args: unknown[]) => {
+        const callback = args.find(arg => typeof arg === 'function') as ((res: unknown) => void) | undefined;
+        if (callback) {
+          setImmediate(() => callback(mockResponse));
+        }
+        return mockRequest as unknown as http.ClientRequest;
+      });
 
       setImmediate(() => {
         mockResponse.sendData('Internal Server Error');

@@ -259,7 +259,9 @@ Status:
   - Created `util/retry.ts` with `withRetry()` and `isRetryableHttpError()`
   - TMDb client now retries on network errors and rate limiting
 
-**Future (P4): Job Queue with BullMQ**
+**✅ P4: Job Queue with BullMQ**
+**Status:** IMPLEMENTED
+**Resolution Date:** 2026-01-16
 
 Benefits:
 - Concurrent job execution with configurable limits
@@ -268,12 +270,17 @@ Benefits:
 - Job prioritization and scheduling
 - Dead letter queue for failed jobs
 
-Implementation steps:
-1. Install `bullmq` and Redis dependencies
-2. Create job queue service with producers/consumers
-3. Migrate JobManager to use queue
-4. Add Redis to docker-compose.yml
-5. Add dashboard for job monitoring (optional: bull-board)
+Implementation:
+- Created `queueConfig.ts` - Redis connection and queue configuration
+- Created `queueService.ts` - BullMQ queue and worker management
+- Updated `jobManager.ts` - Queue integration with fallback to direct mode
+- Added Redis service to `docker-compose.yml` with health checks
+- Queue mode auto-detected via REDIS_HOST environment variable
+
+Usage:
+- Development: Jobs process directly (no Redis required)
+- Production: Set REDIS_HOST=redis to enable queue mode
+- Queue stats available via `jobManager.getQueueStats()`
 
 ---
 
@@ -317,12 +324,16 @@ Implementation steps:
 | `vitest` | Frontend testing | ✅ Installed |
 | `pino` | Structured logging | ✅ Installed |
 | `pino-pretty` | Dev log formatting | ✅ Installed |
+| `pino-http` | Request logging | ✅ Installed |
+| `helmet` | Security headers | ✅ Installed |
+| `express-rate-limit` | Rate limiting | ✅ Installed |
+| `bullmq` | Job queue | ✅ Installed |
+| `ioredis` | Redis client | ✅ Installed |
 
 ### Still Needed
 | Package | Purpose | Priority |
 |---------|---------|----------|
-| `helmet` | Security headers | Low |
-| `express-rate-limit` | Rate limiting | Low |
+| `@playwright/test` | E2E testing | P4 |
 
 ---
 

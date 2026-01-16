@@ -1,4 +1,20 @@
 services:
+  redis:
+    image: redis:7-alpine
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis-data:/data
+    command: redis-server --appendonly yes
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - kometa-preview
+
   backend:
     build:
       context: ./backend
@@ -12,6 +28,8 @@ services:
       - PORT=3001
       - HOST=0.0.0.0
       - CORS_ORIGIN=http://localhost:5173
+      - REDIS_HOST=redis
+      - REDIS_PORT=6379
       # Paths inside the backend container
       - JOBS_PATH=/app/jobs
       - FONTS_PATH=/app/fonts
@@ -43,7 +61,10 @@ services:
       # This enables custom fonts (config/fonts/*.ttf) in fast preview mode
       # - ${KOMETA_CONFIG_PATH}:/user_config:ro
     depends_on:
-      - kometa-renderer-build
+      redis:
+        condition: service_healthy
+      kometa-renderer-build:
+        condition: service_completed_successfully
     restart: unless-stopped
     networks:
       - kometa-preview
@@ -79,3 +100,6 @@ services:
 networks:
   kometa-preview:
     driver: bridge
+
+volumes:
+  redis-data:
