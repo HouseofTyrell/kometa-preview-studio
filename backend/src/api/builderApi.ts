@@ -1,6 +1,7 @@
 import { Router, Request, Response } from 'express';
 import { getProfileStore } from '../storage/profileStore.js';
 import { parseYaml, stringifyYaml, type KometaConfig, type LibraryConfig } from '../util/yaml.js';
+import { builderLogger } from '../util/logger.js';
 
 const router = Router();
 
@@ -47,7 +48,7 @@ router.get('/overlays/:profileId', async (req: Request, res: Response) => {
     });
 
   } catch (err) {
-    console.error('Get overlays error:', err);
+    builderLogger.error({ err }, 'Get overlays error');
     res.status(500).json({
       error: 'Failed to get overlays',
       details: err instanceof Error ? err.message : 'Unknown error',
@@ -122,7 +123,7 @@ router.put('/overlays/:profileId', async (req: Request, res: Response) => {
     });
 
   } catch (err) {
-    console.error('Save overlays error:', err);
+    builderLogger.error({ err }, 'Save overlays error');
     res.status(500).json({
       error: 'Failed to save overlays',
       details: err instanceof Error ? err.message : 'Unknown error',
@@ -150,7 +151,7 @@ router.post('/export', async (req: Request, res: Response) => {
     res.json(exportData);
 
   } catch (err) {
-    console.error('Export error:', err);
+    builderLogger.error({ err }, 'Export error');
     res.status(500).json({
       error: 'Failed to export configuration',
       details: err instanceof Error ? err.message : 'Unknown error',
@@ -211,7 +212,7 @@ router.post('/import', async (req: Request, res: Response) => {
     });
 
   } catch (err) {
-    console.error('Import error:', err);
+    builderLogger.error({ err }, 'Import error');
     res.status(500).json({
       error: 'Failed to import configuration',
       details: err instanceof Error ? err.message : 'Unknown error',

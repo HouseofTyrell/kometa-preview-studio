@@ -1,5 +1,6 @@
 import { Router, Request, Response } from 'express';
 import { PlexClient } from '../plex/plexClient.js';
+import { plexLogger } from '../util/logger.js';
 
 const router = Router();
 
@@ -59,7 +60,7 @@ router.post('/test', async (req: Request, res: Response) => {
       message: `Connected! Found ${libraries.length} ${libraries.length === 1 ? 'library' : 'libraries'}.`,
     });
   } catch (err) {
-    console.error('Plex connection test error:', err);
+    plexLogger.error({ err }, 'Plex connection test error');
     res.status(500).json({
       success: false,
       error: err instanceof Error ? err.message : 'Connection failed',

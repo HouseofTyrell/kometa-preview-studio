@@ -3,6 +3,7 @@ import { getJobManager } from '../jobs/jobManager.js';
 import { getProfileStore } from '../storage/profileStore.js';
 import { TestOptions, DEFAULT_TEST_OPTIONS } from '../types/testOptions.js';
 import { getAvailableTargets } from '../plex/resolveTargets.js';
+import { jobLogger } from '../util/logger.js';
 
 const router = Router();
 
@@ -54,7 +55,7 @@ router.post('/start', async (req: Request, res: Response) => {
       : DEFAULT_TEST_OPTIONS;
 
     // Debug: Log manual builder config
-    console.log('Preview start - manual builder config:', JSON.stringify(options.manualBuilderConfig, null, 2));
+    jobLogger.debug({ manualBuilderConfig: options.manualBuilderConfig }, 'Preview start - manual builder config');
 
     // Create job with test options
     const jobManager = getJobManager();
@@ -68,7 +69,7 @@ router.post('/start', async (req: Request, res: Response) => {
     });
 
   } catch (err) {
-    console.error('Preview start error:', err);
+    jobLogger.error({ err }, 'Preview start error');
     res.status(500).json({
       error: 'Failed to start preview',
       details: err instanceof Error ? err.message : 'Unknown error',

@@ -2,6 +2,7 @@ import * as path from 'path';
 import { ensureDir, readJson, writeJson, listFiles, deleteFile, pathExists } from '../util/safeFs.js';
 import { getJobsBasePath } from '../jobs/paths.js';
 import { MAX_PROFILES, PROFILE_EXPIRY_MS } from '../constants.js';
+import { storageLogger } from '../util/logger.js';
 
 /**
  * Profile data structure
@@ -75,9 +76,9 @@ class ProfileStore {
         }
       }
 
-      console.log(`ProfileStore: Loaded ${this.cache.size} profile(s) from disk`);
+      storageLogger.info({ count: this.cache.size }, 'Loaded profiles from disk');
     } catch (err) {
-      console.error('ProfileStore: Failed to load profiles from disk:', err);
+      storageLogger.error({ err }, 'Failed to load profiles from disk');
     }
 
     this.initialized = true;
@@ -117,7 +118,7 @@ class ProfileStore {
       const profilePath = getProfilePath(profileId);
       await writeJson(profilePath, profile);
     } catch (err) {
-      console.error(`ProfileStore: Failed to save profile ${profileId}:`, err);
+      storageLogger.error({ err, profileId }, 'Failed to save profile');
     }
   }
 
@@ -134,7 +135,7 @@ class ProfileStore {
         await deleteFile(profilePath);
       }
     } catch (err) {
-      console.error(`ProfileStore: Failed to delete profile ${profileId}:`, err);
+      storageLogger.error({ err, profileId }, 'Failed to delete profile');
     }
 
     return existed;

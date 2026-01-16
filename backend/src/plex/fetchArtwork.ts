@@ -4,6 +4,7 @@ import { PlexClient } from './plexClient.js';
 import { ResolvedTarget } from './resolveTargets.js';
 import { pathExists } from '../util/safeFs.js';
 import { TmdbClient, KNOWN_TMDB_IDS } from './tmdbClient.js';
+import { plexLogger } from '../util/logger.js';
 
 export type ArtworkSource = 'asset_directory' | 'original_poster' | 'tmdb' | 'plex_current';
 
@@ -93,7 +94,7 @@ async function fetchTargetArtwork(
           warnings,
         };
       } catch (err) {
-        console.error(`Failed to download TMDb poster for ${target.id}:`, err);
+        plexLogger.error({ err, targetId: target.id }, 'Failed to download TMDb poster');
         // Continue to fallback
       }
     }
@@ -125,7 +126,7 @@ async function fetchTargetArtwork(
         warnings: [...warnings, 'Using generated placeholder image for manual mode preview'],
       };
     } catch (err) {
-      console.error(`Failed to generate placeholder for ${target.id}:`, err);
+      plexLogger.error({ err, targetId: target.id }, 'Failed to generate placeholder');
       // Continue to no artwork fallback
     }
   }
@@ -347,7 +348,7 @@ async function generatePlaceholderImage(target: ResolvedTarget, outputPath: stri
   const text = encodeURIComponent(target.actualTitle || target.label);
   const url = `https://placehold.co/${width}x${height}/${color}/cccccc/png?text=${text}`;
 
-  console.log(`Generating placeholder for ${target.id}: ${url}`);
+  plexLogger.debug({ targetId: target.id, url }, 'Generating placeholder');
 
   try {
     const response = await fetch(url);
@@ -356,9 +357,9 @@ async function generatePlaceholderImage(target: ResolvedTarget, outputPath: stri
     }
     const buffer = await response.arrayBuffer();
     await fs.writeFile(outputPath, Buffer.from(buffer));
-    console.log(`Placeholder saved to ${outputPath}`);
+    plexLogger.debug({ outputPath }, 'Placeholder saved');
   } catch (err) {
-    console.error(`Failed to generate online placeholder, using fallback: ${err}`);
+    plexLogger.warn({ err }, 'Failed to generate online placeholder, using fallback');
     // If online placeholder fails, create a minimal solid color PNG
     // This is a 1x1 pixel gray PNG as a last resort
     const minimalPng = Buffer.from(

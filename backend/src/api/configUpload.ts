@@ -4,6 +4,7 @@ import { generateProfileId } from '../util/hash.js';
 import { getProfileStore, ProfileData } from '../storage/profileStore.js';
 import { validateConfig, validatePreviewRequirements } from '../util/configSchema.js';
 import { PROFILE_EXPIRY_MS } from '../constants.js';
+import { apiLogger } from '../util/logger.js';
 
 const router = Router();
 
@@ -110,7 +111,7 @@ router.post('/new', async (req: Request, res: Response) => {
     });
 
   } catch (err) {
-    console.error('Config creation error:', err);
+    apiLogger.error({ err }, 'Config creation error');
     res.status(500).json({
       error: 'Failed to create configuration',
       details: err instanceof Error ? err.message : 'Unknown error',
@@ -210,7 +211,7 @@ router.post('/', async (req: Request, res: Response) => {
     });
 
   } catch (err) {
-    console.error('Config upload error:', err);
+    apiLogger.error({ err }, 'Config upload error');
     res.status(500).json({
       error: 'Failed to process configuration',
       details: err instanceof Error ? err.message : 'Unknown error',

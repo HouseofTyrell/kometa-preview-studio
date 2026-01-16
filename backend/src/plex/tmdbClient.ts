@@ -6,6 +6,7 @@
  */
 
 import * as https from 'https';
+import { tmdbLogger } from '../util/logger.js';
 
 const TMDB_API_BASE = 'https://api.themoviedb.org/3';
 const TMDB_IMAGE_BASE = 'https://image.tmdb.org/t/p/original';
@@ -116,7 +117,7 @@ export class TmdbClient {
       }
       return null;
     } catch (err) {
-      console.error(`TMDb: Failed to get movie poster for ${tmdbId}:`, err);
+      tmdbLogger.error({ err, tmdbId }, 'Failed to get movie poster');
       return null;
     }
   }
@@ -132,7 +133,7 @@ export class TmdbClient {
       }
       return null;
     } catch (err) {
-      console.error(`TMDb: Failed to get TV show poster for ${tmdbId}:`, err);
+      tmdbLogger.error({ err, tmdbId }, 'Failed to get TV show poster');
       return null;
     }
   }
@@ -151,7 +152,7 @@ export class TmdbClient {
       // Fall back to show poster if season doesn't have one
       return this.getTvShowPoster(tvId);
     } catch (err) {
-      console.error(`TMDb: Failed to get season poster for ${tvId} S${seasonNumber}:`, err);
+      tmdbLogger.error({ err, tvId, seasonNumber }, 'Failed to get season poster');
       return null;
     }
   }
@@ -173,10 +174,7 @@ export class TmdbClient {
       }
       return null;
     } catch (err) {
-      console.error(
-        `TMDb: Failed to get episode still for ${tvId} S${seasonNumber}E${episodeNumber}:`,
-        err
-      );
+      tmdbLogger.error({ err, tvId, seasonNumber, episodeNumber }, 'Failed to get episode still');
       return null;
     }
   }
@@ -199,7 +197,7 @@ export class TmdbClient {
       }
       return null;
     } catch (err) {
-      console.error(`TMDb: Failed to search movie poster for "${title}":`, err);
+      tmdbLogger.error({ err, title }, 'Failed to search movie poster');
       return null;
     }
   }
@@ -219,7 +217,7 @@ export class TmdbClient {
       }
       return null;
     } catch (err) {
-      console.error(`TMDb: Failed to search TV poster for "${title}":`, err);
+      tmdbLogger.error({ err, title }, 'Failed to search TV poster');
       return null;
     }
   }

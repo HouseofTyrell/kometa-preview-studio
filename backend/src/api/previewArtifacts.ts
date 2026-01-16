@@ -4,6 +4,7 @@ import * as path from 'path';
 import { getJobManager } from '../jobs/jobManager.js';
 import { pathExists, safeResolve, readText } from '../util/safeFs.js';
 import { getJobPaths } from '../jobs/paths.js';
+import { apiLogger } from '../util/logger.js';
 
 const router = Router();
 
@@ -26,7 +27,7 @@ router.get('/artifacts/:jobId', async (req: Request, res: Response) => {
     res.json(artifacts);
 
   } catch (err) {
-    console.error('Artifacts error:', err);
+    apiLogger.error({ err }, 'Artifacts error');
     res.status(500).json({
       error: 'Failed to get artifacts',
       details: err instanceof Error ? err.message : 'Unknown error',
@@ -79,7 +80,7 @@ router.get('/image/:jobId/:folder/:filename', async (req: Request, res: Response
     // Stream the file with error handling
     const stream = fs.createReadStream(imagePath);
     stream.on('error', (err) => {
-      console.error('Stream error serving image:', err);
+      apiLogger.error({ err }, 'Stream error serving image');
       if (!res.headersSent) {
         res.status(500).json({ error: 'Failed to read image file' });
       }
@@ -87,7 +88,7 @@ router.get('/image/:jobId/:folder/:filename', async (req: Request, res: Response
     stream.pipe(res);
 
   } catch (err) {
-    console.error('Image serve error:', err);
+    apiLogger.error({ err }, 'Image serve error');
     res.status(500).json({
       error: 'Failed to serve image',
       details: err instanceof Error ? err.message : 'Unknown error',
@@ -154,7 +155,7 @@ router.get('/image/:jobId/:folder/:subfolder/:filename', async (req: Request, re
     // Stream the file with error handling
     const stream = fs.createReadStream(imagePath);
     stream.on('error', (err) => {
-      console.error('Stream error serving image:', err);
+      apiLogger.error({ err }, 'Stream error serving image');
       if (!res.headersSent) {
         res.status(500).json({ error: 'Failed to read image file' });
       }
@@ -162,7 +163,7 @@ router.get('/image/:jobId/:folder/:subfolder/:filename', async (req: Request, re
     stream.pipe(res);
 
   } catch (err) {
-    console.error('Image serve error:', err);
+    apiLogger.error({ err }, 'Image serve error');
     res.status(500).json({
       error: 'Failed to serve image',
       details: err instanceof Error ? err.message : 'Unknown error',
@@ -192,7 +193,7 @@ router.get('/logs/:jobId', async (req: Request, res: Response) => {
     res.send(logs || '');
 
   } catch (err) {
-    console.error('Logs error:', err);
+    apiLogger.error({ err }, 'Logs error');
     res.status(500).json({
       error: 'Failed to get logs',
       details: err instanceof Error ? err.message : 'Unknown error',
@@ -233,7 +234,7 @@ router.get('/download/:jobId/:folder/:filename', async (req: Request, res: Respo
     // Stream the file with error handling
     const stream = fs.createReadStream(imagePath);
     stream.on('error', (err) => {
-      console.error('Stream error during download:', err);
+      apiLogger.error({ err }, 'Stream error during download');
       if (!res.headersSent) {
         res.status(500).json({ error: 'Failed to read file' });
       }
@@ -241,7 +242,7 @@ router.get('/download/:jobId/:folder/:filename', async (req: Request, res: Respo
     stream.pipe(res);
 
   } catch (err) {
-    console.error('Download error:', err);
+    apiLogger.error({ err }, 'Download error');
     res.status(500).json({
       error: 'Failed to download file',
       details: err instanceof Error ? err.message : 'Unknown error',

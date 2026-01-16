@@ -2,6 +2,7 @@ import { Router, Request, Response } from 'express';
 import crypto from 'crypto';
 import fs from 'fs/promises';
 import path from 'path';
+import { sharingLogger } from '../util/logger.js';
 
 const router = Router();
 
@@ -13,7 +14,7 @@ async function ensureSharesDir() {
   try {
     await fs.mkdir(SHARES_DIR, { recursive: true });
   } catch (error) {
-    console.error('Failed to create shares directory:', error);
+    sharingLogger.error({ err: error }, 'Failed to create shares directory');
   }
 }
 
@@ -70,7 +71,7 @@ router.post('/create', async (req: Request, res: Response) => {
       shareUrl: `/share/${shareId}`,
     });
   } catch (err) {
-    console.error('Share creation error:', err);
+    sharingLogger.error({ err }, 'Share creation error');
     res.status(500).json({
       error: 'Failed to create share',
       details: err instanceof Error ? err.message : 'Unknown error',
@@ -110,7 +111,7 @@ router.get('/:shareId', async (req: Request, res: Response) => {
       throw error;
     }
   } catch (err) {
-    console.error('Share retrieval error:', err);
+    sharingLogger.error({ err }, 'Share retrieval error');
     res.status(500).json({
       error: 'Failed to retrieve share',
       details: err instanceof Error ? err.message : 'Unknown error',
@@ -186,7 +187,7 @@ router.post('/gist', async (req: Request, res: Response) => {
       rawUrl: gist.files['overlay-config.json'].raw_url,
     });
   } catch (err) {
-    console.error('Gist creation error:', err);
+    sharingLogger.error({ err }, 'Gist creation error');
     res.status(500).json({
       error: 'Failed to create gist',
       details: err instanceof Error ? err.message : 'Unknown error',
@@ -236,7 +237,7 @@ router.get('/gist/:gistId', async (req: Request, res: Response) => {
       ...data,
     });
   } catch (err) {
-    console.error('Gist retrieval error:', err);
+    sharingLogger.error({ err }, 'Gist retrieval error');
     res.status(500).json({
       error: 'Failed to retrieve gist',
       details: err instanceof Error ? err.message : 'Unknown error',
@@ -267,7 +268,7 @@ router.get('/list/all', async (req: Request, res: Response) => {
           metadata: share.metadata,
         });
       } catch (error) {
-        console.error(`Failed to read share ${file}:`, error);
+        sharingLogger.warn({ err: error, file }, 'Failed to read share file');
       }
     }
 
@@ -277,7 +278,7 @@ router.get('/list/all', async (req: Request, res: Response) => {
       total: shares.length,
     });
   } catch (err) {
-    console.error('List shares error:', err);
+    sharingLogger.error({ err }, 'List shares error');
     res.status(500).json({
       error: 'Failed to list shares',
       details: err instanceof Error ? err.message : 'Unknown error',
