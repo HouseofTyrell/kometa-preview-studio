@@ -1,7 +1,8 @@
 import '@testing-library/jest-dom';
 
 // Mock ResizeObserver which isn't available in jsdom
-global.ResizeObserver = class ResizeObserver {
+// Use globalThis which is available in both Node.js and browser environments
+(globalThis as typeof globalThis & { ResizeObserver: typeof ResizeObserver }).ResizeObserver = class ResizeObserver {
   observe() {}
   unobserve() {}
   disconnect() {}
