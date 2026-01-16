@@ -304,9 +304,9 @@ Consider for future:
 
 1. [ ] Add request logging middleware
 2. [ ] Verify error boundary coverage
-3. [ ] Add profile expiry to API response
+3. [x] Add profile expiry to API response (RESOLVED 2026-01-16)
 4. [ ] Document Community/Sharing API status
-5. [ ] Add environment variable validation on startup
+5. [x] Add environment variable validation on startup (RESOLVED 2026-01-16)
 
 ---
 

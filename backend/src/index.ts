@@ -17,6 +17,7 @@ import { DEFAULT_PORT, DEFAULT_HOST, DEFAULT_CORS_ORIGIN } from './constants.js'
 import { initializeProfileStore } from './storage/profileStore.js';
 import { getJobManager } from './jobs/jobManager.js';
 import { serverLogger, dockerLogger, apiLogger } from './util/logger.js';
+import { validateEnvironmentOrExit, logEnvironmentConfig } from './util/envValidation.js';
 
 // Load environment variables from process.env (with constants as defaults)
 const PORT = parseInt(process.env.PORT || String(DEFAULT_PORT), 10);
@@ -24,12 +25,19 @@ const HOST = process.env.HOST || DEFAULT_HOST;
 const CORS_ORIGIN = process.env.CORS_ORIGIN || DEFAULT_CORS_ORIGIN;
 
 async function main() {
-  // Ensure required directories exist
-  const jobsPath = getJobsBasePath();
-  const fontsPath = getFontsPath();
-
   serverLogger.info('Kometa Preview Studio - Backend');
   serverLogger.info('================================');
+
+  // Validate environment variables before proceeding
+  // This will exit with an error if required variables are invalid
+  validateEnvironmentOrExit();
+
+  // Log environment config at debug level for troubleshooting
+  logEnvironmentConfig();
+
+  // Get configured paths
+  const jobsPath = getJobsBasePath();
+  const fontsPath = getFontsPath();
   serverLogger.info({ jobsPath }, 'Jobs directory configured');
   serverLogger.info({ fontsPath }, 'Fonts directory configured');
 
