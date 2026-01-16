@@ -111,6 +111,9 @@ fi
 info "Checking for Inter font..."
 
 INTER_FONT_PATH="$REPO_ROOT/fonts/Inter-Regular.ttf"
+# Minimum expected sizes (in bytes) for validation
+MIN_ZIP_SIZE=1000000    # 1MB - Inter zip is ~17MB
+MIN_FONT_SIZE=100000    # 100KB - Inter-Regular.ttf is ~300KB
 
 if [ ! -f "$INTER_FONT_PATH" ]; then
     warn "Inter-Regular.ttf not found. Attempting to download..."
@@ -124,12 +127,23 @@ if [ ! -f "$INTER_FONT_PATH" ]; then
     }
     trap cleanup EXIT
 
-    info "Downloading Inter font from GitHub..."
+    info "Downloading Inter font from GitHub (~17MB)..."
 
+    DOWNLOAD_SUCCESS=false
     if command -v curl >/dev/null 2>&1; then
-        curl -L -o "$TEMP_ZIP" "$INTER_ZIP_URL"
+        # Use --fail to return error on HTTP errors (404, 500, etc.)
+        # Use --silent --show-error for cleaner output with errors shown
+        if curl --fail --location --silent --show-error -o "$TEMP_ZIP" "$INTER_ZIP_URL"; then
+            DOWNLOAD_SUCCESS=true
+        else
+            err "curl download failed (HTTP error or network issue)"
+        fi
     elif command -v wget >/dev/null 2>&1; then
-        wget -O "$TEMP_ZIP" "$INTER_ZIP_URL"
+        if wget --quiet -O "$TEMP_ZIP" "$INTER_ZIP_URL"; then
+            DOWNLOAD_SUCCESS=true
+        else
+            err "wget download failed (HTTP error or network issue)"
+        fi
     else
         err "Neither curl nor wget found. Cannot download Inter font."
         err ""
@@ -142,20 +156,71 @@ if [ ! -f "$INTER_FONT_PATH" ]; then
         exit 1
     fi
 
+    if [ "$DOWNLOAD_SUCCESS" = false ]; then
+        err ""
+        err "Failed to download Inter font. Possible causes:"
+        err "  - No internet connection"
+        err "  - GitHub is unreachable"
+        err "  - The release URL has changed"
+        err ""
+        err "Manual fix: Download Inter from https://github.com/rsms/inter/releases"
+        err "            Extract Inter-Regular.ttf to: $REPO_ROOT/fonts/"
+        exit 1
+    fi
+
+    # Verify the downloaded file exists and has reasonable size
+    if [ ! -f "$TEMP_ZIP" ]; then
+        err "Download appeared to succeed but file not found at $TEMP_ZIP"
+        exit 1
+    fi
+
+    ZIP_SIZE=$(stat -f%z "$TEMP_ZIP" 2>/dev/null || stat -c%s "$TEMP_ZIP" 2>/dev/null || echo "0")
+    if [ "$ZIP_SIZE" -lt "$MIN_ZIP_SIZE" ]; then
+        err "Downloaded file is too small (${ZIP_SIZE} bytes, expected >1MB)"
+        err "This usually means GitHub returned an error page instead of the file."
+        err ""
+        err "Manual fix: Download Inter from https://github.com/rsms/inter/releases"
+        err "            Extract Inter-Regular.ttf to: $REPO_ROOT/fonts/"
+        exit 1
+    fi
+
+    info "Download complete ($(numfmt --to=iec-i --suffix=B $ZIP_SIZE 2>/dev/null || echo "${ZIP_SIZE} bytes")). Verifying archive..."
+
+    # Verify the zip file is valid before extracting
+    if ! unzip -t "$TEMP_ZIP" >/dev/null 2>&1; then
+        err "Downloaded file is not a valid ZIP archive (possibly corrupted or incomplete)"
+        err ""
+        err "Manual fix: Download Inter from https://github.com/rsms/inter/releases"
+        err "            Extract Inter-Regular.ttf to: $REPO_ROOT/fonts/"
+        exit 1
+    fi
+
     info "Extracting Inter-Regular.ttf..."
 
-    unzip -q "$TEMP_ZIP" -d "$TEMP_DIR"
+    if ! unzip -q "$TEMP_ZIP" -d "$TEMP_DIR"; then
+        err "Failed to extract ZIP archive"
+        exit 1
+    fi
 
     # Find and copy Inter-Regular.ttf
     EXTRACTED_FONT=$(find "$TEMP_DIR" -name "Inter-Regular.ttf" -type f | head -1)
 
-    if [ -n "$EXTRACTED_FONT" ]; then
-        cp "$EXTRACTED_FONT" "$INTER_FONT_PATH"
-        success "Inter-Regular.ttf installed to fonts/"
-    else
+    if [ -z "$EXTRACTED_FONT" ]; then
         err "Could not find Inter-Regular.ttf in the downloaded archive"
+        err "Archive contents:"
+        unzip -l "$TEMP_ZIP" | head -20
         exit 1
     fi
+
+    # Verify extracted font has reasonable size
+    FONT_SIZE=$(stat -f%z "$EXTRACTED_FONT" 2>/dev/null || stat -c%s "$EXTRACTED_FONT" 2>/dev/null || echo "0")
+    if [ "$FONT_SIZE" -lt "$MIN_FONT_SIZE" ]; then
+        err "Extracted font file is too small (${FONT_SIZE} bytes, expected >100KB)"
+        exit 1
+    fi
+
+    cp "$EXTRACTED_FONT" "$INTER_FONT_PATH"
+    success "Inter-Regular.ttf installed to fonts/ ($(numfmt --to=iec-i --suffix=B $FONT_SIZE 2>/dev/null || echo "${FONT_SIZE} bytes"))"
 else
     success "Inter-Regular.ttf found"
 fi
