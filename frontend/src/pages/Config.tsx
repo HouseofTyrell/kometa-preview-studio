@@ -3,6 +3,7 @@ import ConfigUploader from '../components/ConfigUploader'
 import PlexCredentialsForm from '../components/PlexCredentialsForm'
 import OverlayEditor from '../components/OverlayEditor'
 import TemplateSelector from '../components/TemplateSelector'
+import ProfileExpiryWarning from '../components/ProfileExpiryWarning'
 import { ConfigAnalysis } from '../api/client'
 import { OverlayTemplate } from '../data/overlayTemplates'
 import { OverlayConfig } from '../types/overlayConfig'
@@ -216,12 +217,14 @@ function ConfigPage({ currentConfig, onConfigUpdate }: ConfigPageProps) {
           )}
 
           {analysis && (
-            <div className="card">
-              <h2 className="card-title">Config Analysis</h2>
+            <>
+              <ProfileExpiryWarning expiresAt={analysis.expiresAt} />
+              <div className="card">
+                <h2 className="card-title">Config Analysis</h2>
 
-              <div className="flex flex-col gap-2">
-                <div className="config-item">
-                  <span className="config-label">Plex URL:</span>
+                <div className="flex flex-col gap-2">
+                  <div className="config-item">
+                    <span className="config-label">Plex URL:</span>
                   <span className="config-value">
                     {analysis.plexUrl || <span className="text-warning">Not found</span>}
                   </span>
@@ -281,16 +284,14 @@ function ConfigPage({ currentConfig, onConfigUpdate }: ConfigPageProps) {
                   </div>
                 )}
               </div>
-            </div>
-          )}
-
-          {analysis && (
-            <OverlayEditor
-              overlayYaml={analysis.overlayYaml}
-              onEdit={handleConfigEdit}
-              fullConfig={configYaml}
-              initialOverlays={entryMode === 'scratch' ? initialOverlays : undefined}
-            />
+              </div>
+              <OverlayEditor
+                overlayYaml={analysis.overlayYaml}
+                onEdit={handleConfigEdit}
+                fullConfig={configYaml}
+                initialOverlays={entryMode === 'scratch' ? initialOverlays : undefined}
+              />
+            </>
           )}
         </div>
 

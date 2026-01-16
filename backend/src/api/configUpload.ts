@@ -3,8 +3,18 @@ import { parseYaml, analyzeConfig, KometaConfig } from '../util/yaml.js';
 import { generateProfileId } from '../util/hash.js';
 import { getProfileStore, ProfileData } from '../storage/profileStore.js';
 import { validateConfig, validatePreviewRequirements } from '../util/configSchema.js';
+import { PROFILE_EXPIRY_MS } from '../constants.js';
 
 const router = Router();
+
+/**
+ * Calculate the expiration timestamp for a profile based on its creation time
+ */
+function calculateExpiresAt(createdAt: string): string {
+  const createdTime = new Date(createdAt).getTime();
+  const expiresTime = createdTime + PROFILE_EXPIRY_MS;
+  return new Date(expiresTime).toISOString();
+}
 
 /**
  * Generate a minimal Kometa config from Plex credentials
@@ -94,6 +104,7 @@ router.post('/new', async (req: Request, res: Response) => {
         libraryNames: analysis.libraryNames,
         warnings: analysis.warnings,
         overlayYaml: analysis.overlayYaml,
+        expiresAt: calculateExpiresAt(profile.createdAt),
       },
       configYaml,
     });
@@ -195,6 +206,7 @@ router.post('/', async (req: Request, res: Response) => {
       libraryNames: analysis.libraryNames,
       warnings: analysis.warnings,
       overlayYaml: analysis.overlayYaml,
+      expiresAt: calculateExpiresAt(profile.createdAt),
     });
 
   } catch (err) {
@@ -231,6 +243,7 @@ router.get('/:profileId', (req: Request, res: Response) => {
     overlayYaml: profile.analysis.overlayYaml,
     createdAt: profile.createdAt,
     updatedAt: profile.updatedAt,
+    expiresAt: calculateExpiresAt(profile.createdAt),
   });
 });
 
@@ -294,6 +307,7 @@ router.put('/:profileId', async (req: Request, res: Response) => {
     warnings: analysis.warnings,
     overlayYaml: analysis.overlayYaml,
     updatedAt: updatedProfile.updatedAt,
+    expiresAt: calculateExpiresAt(updatedProfile.createdAt),
   });
 });
 

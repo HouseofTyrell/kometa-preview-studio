@@ -11,6 +11,7 @@ export interface ConfigAnalysis {
   libraryNames: string[];
   warnings: string[];
   overlayYaml: string;
+  expiresAt?: string;  // ISO timestamp when this profile will auto-expire
 }
 
 // Job status values - must match backend/src/constants.ts
