@@ -2,6 +2,7 @@ import { Router, Request, Response } from 'express';
 import { parseYaml, analyzeConfig, KometaConfig } from '../util/yaml.js';
 import { generateProfileId } from '../util/hash.js';
 import { getProfileStore, ProfileData } from '../storage/profileStore.js';
+import { validateConfig, validatePreviewRequirements } from '../util/configSchema.js';
 
 const router = Router();
 
@@ -149,10 +150,27 @@ router.post('/', async (req: Request, res: Response) => {
       return;
     }
 
+    // Validate config structure with Zod
+    const validation = validateConfig(parsed.parsed);
+    if (!validation.valid) {
+      res.status(400).json({
+        error: 'Invalid configuration structure',
+        details: validation.errors.map(e => `${e.path}: ${e.message}`).join('; '),
+        validationErrors: validation.errors,
+      });
+      return;
+    }
+
     const config = parsed.parsed as KometaConfig;
 
     // Analyze the config
     const analysis = analyzeConfig(config);
+
+    // Validate preview requirements (optional warnings, not blocking)
+    const previewWarnings = validatePreviewRequirements(validation.config!);
+    if (previewWarnings.length > 0) {
+      analysis.warnings.push(...previewWarnings);
+    }
 
     // Create profile
     const profileId = generateProfileId();

@@ -1,64 +1,42 @@
-import * as fs from 'fs/promises';
 import * as path from 'path';
 import { EventEmitter } from 'events';
 import { v4 as uuidv4 } from 'uuid';
 import { getJobPaths, getJobsBasePath, getJobsHostPath, getFontsPath, getFontsHostPath, getKometaRendererImage, getUserPaths, getCacheHostPath, getOverlayAssetsHostPath } from './paths.js';
-import { ensureDir, writeText, readText, pathExists, writeJson, readJson } from '../util/safeFs.js';
+import { ensureDir, writeText, writeJson } from '../util/safeFs.js';
 import { KometaRunner, RunnerConfig, RunnerEvent } from '../kometa/runner.js';
 import { parseYaml, analyzeConfig, KometaConfig } from '../util/yaml.js';
 import { PlexClient } from '../plex/plexClient.js';
 import { resolveTargets, ResolvedTarget } from '../plex/resolveTargets.js';
-import { fetchArtwork, FetchedArtwork, ArtworkSource } from '../plex/fetchArtwork.js';
+import { fetchArtwork } from '../plex/fetchArtwork.js';
 import { createTmdbClient } from '../plex/tmdbClient.js';
 import { generatePreviewConfig } from '../kometa/configGenerator.js';
 import { TestOptions, DEFAULT_TEST_OPTIONS } from '../types/testOptions.js';
+import { JobRepository, JobMeta, JobTarget, JobStatus } from './jobRepository.js';
+import { ArtifactManager, JobArtifacts } from './artifactManager.js';
 
-export type JobStatus = 'pending' | 'running' | 'paused' | 'completed' | 'failed' | 'cancelled';
-
-export interface JobTarget {
-  id: string;
-  title: string;
-  type: string;
-  baseSource: ArtworkSource;
-  warnings: string[];
-}
-
-export interface JobMeta {
-  jobId: string;
-  status: JobStatus;
-  progress: number;
-  createdAt: string;
-  updatedAt: string;
-  completedAt?: string;
-  exitCode?: number;
-  error?: string;
-  targets: JobTarget[];
-  warnings: string[];
-}
-
-export interface JobArtifacts {
-  jobId: string;
-  items: Array<{
-    id: string;
-    title: string;
-    type: string;
-    beforeUrl: string;
-    afterUrl: string;
-    draftUrl?: string;
-    baseSource: ArtworkSource;
-    warnings: string[];
-  }>;
-}
+// Re-export types for backwards compatibility
+export type { JobStatus, JobTarget, JobMeta } from './jobRepository.js';
+export type { JobArtifacts } from './artifactManager.js';
 
 /**
  * Job Manager - Orchestrates preview jobs
+ *
+ * This class coordinates job execution by delegating to:
+ * - JobRepository: Job metadata persistence
+ * - ArtifactManager: Artifact (image/log) retrieval
+ * - KometaRunner: Container execution
  */
 class JobManager extends EventEmitter {
   private runner: KometaRunner;
-  private jobs: Map<string, JobMeta> = new Map();
+  private repository: JobRepository;
+  private artifacts: ArtifactManager;
 
   constructor() {
     super();
+
+    // Initialize extracted services
+    this.repository = new JobRepository();
+    this.artifacts = new ArtifactManager();
 
     const runnerConfig: RunnerConfig = {
       kometaImage: getKometaRendererImage(),
@@ -131,8 +109,8 @@ class JobManager extends EventEmitter {
       warnings: [...analysis.warnings],
     };
 
-    this.jobs.set(jobId, jobMeta);
-    await this.saveJobMeta(jobId, jobMeta);
+    this.repository.setInCache(jobId, jobMeta);
+    await this.repository.saveJobMeta(jobId, jobMeta);
 
     // Emit job creation event
     this.emit(`job:${jobId}`, {
@@ -306,9 +284,9 @@ class JobManager extends EventEmitter {
         warnings: [...t.warnings, ...(artwork[i]?.warnings || [])],
       }));
 
-      const currentMeta = this.jobs.get(jobId)!;
+      const currentMeta = this.repository.getFromCache(jobId)!;
       currentMeta.targets = jobTargets;
-      await this.saveJobMeta(jobId, currentMeta);
+      await this.repository.saveJobMeta(jobId, currentMeta);
 
       // Log any warnings about artwork sources
       for (const art of artwork) {
@@ -409,122 +387,45 @@ class JobManager extends EventEmitter {
 
   /**
    * Get job metadata
+   * Delegates to JobRepository
    */
   async getJobMeta(jobId: string): Promise<JobMeta | null> {
-    // Check memory cache first
-    if (this.jobs.has(jobId)) {
-      return this.jobs.get(jobId)!;
-    }
-
-    // Try to load from disk
-    const paths = getJobPaths(jobId);
-    const metaPath = path.join(paths.jobDir, 'job-meta.json');
-
-    if (await pathExists(metaPath)) {
-      try {
-        const meta = await readJson(metaPath) as JobMeta;
-        this.jobs.set(jobId, meta);
-        return meta;
-      } catch {
-        return null;
-      }
-    }
-
-    return null;
+    return this.repository.getJobMeta(jobId);
   }
 
   /**
    * Get job artifacts (before/after images)
+   * Delegates to ArtifactManager
    */
   async getJobArtifacts(jobId: string): Promise<JobArtifacts | null> {
     const meta = await this.getJobMeta(jobId);
     if (!meta) {
       return null;
     }
-
-    const paths = getJobPaths(jobId);
-    const items: JobArtifacts['items'] = [];
-
-    // Supported image extensions (in priority order)
-    const imageExtensions = ['png', 'jpg', 'jpeg', 'webp'];
-
-    for (const target of meta.targets) {
-      const beforeFile = `${target.id}.jpg`;
-      const beforePath = path.join(paths.inputDir, beforeFile);
-
-      // Find the after file with any supported extension
-      let afterFile = '';
-      let afterUrl = '';
-      for (const ext of imageExtensions) {
-        const candidateFile = `${target.id}_after.${ext}`;
-        const candidatePath = path.join(paths.outputDir, candidateFile);
-        if (await pathExists(candidatePath)) {
-          afterFile = candidateFile;
-          afterUrl = `/api/preview/image/${jobId}/output/${afterFile}`;
-          break;
-        }
-      }
-
-      // Find draft file (instant preview shown while Kometa renders)
-      let draftUrl = '';
-      const draftDir = path.join(paths.outputDir, 'draft');
-      if (await pathExists(draftDir)) {
-        for (const ext of imageExtensions) {
-          const draftFile = `${target.id}_draft.${ext}`;
-          const draftPath = path.join(draftDir, draftFile);
-          if (await pathExists(draftPath)) {
-            draftUrl = `/api/preview/image/${jobId}/output/draft/${draftFile}`;
-            break;
-          }
-        }
-      }
-
-      if (await pathExists(beforePath)) {
-        items.push({
-          id: target.id,
-          title: target.title,
-          type: target.type,
-          beforeUrl: `/api/preview/image/${jobId}/input/${beforeFile}`,
-          afterUrl,
-          draftUrl,
-          baseSource: target.baseSource,
-          warnings: target.warnings,
-        });
-      }
-    }
-
-    return { jobId, items };
+    return this.artifacts.getJobArtifacts(jobId, meta);
   }
 
   /**
    * Get path to an image file
+   * Delegates to ArtifactManager
    */
   getImagePath(jobId: string, folder: 'input' | 'output', filename: string): string | null {
-    const paths = getJobPaths(jobId);
-    const dir = folder === 'input' ? paths.inputDir : paths.outputDir;
-
-    // Sanitize filename to prevent path traversal
-    const sanitized = path.basename(filename);
-    if (sanitized !== filename) {
-      return null;
-    }
-
-    return path.join(dir, sanitized);
+    return this.artifacts.getImagePath(jobId, folder, filename);
   }
 
   /**
    * Get path to log file
+   * Delegates to ArtifactManager
    */
   getLogPath(jobId: string): string {
-    const paths = getJobPaths(jobId);
-    return path.join(paths.logsDir, 'container.log');
+    return this.artifacts.getLogPath(jobId);
   }
 
   /**
    * Cancel a running job
    */
   async cancelJob(jobId: string): Promise<boolean> {
-    const meta = this.jobs.get(jobId);
+    const meta = this.repository.getFromCache(jobId);
     if (!meta || (meta.status !== 'running' && meta.status !== 'paused')) {
       return false;
     }
@@ -541,7 +442,7 @@ class JobManager extends EventEmitter {
    * Pause a running job
    */
   async pauseJob(jobId: string): Promise<boolean> {
-    const meta = this.jobs.get(jobId);
+    const meta = this.repository.getFromCache(jobId);
     if (!meta || meta.status !== 'running') {
       return false;
     }
@@ -564,7 +465,7 @@ class JobManager extends EventEmitter {
    * Resume a paused job
    */
   async resumeJob(jobId: string): Promise<boolean> {
-    const meta = this.jobs.get(jobId);
+    const meta = this.repository.getFromCache(jobId);
     if (!meta || meta.status !== 'paused') {
       return false;
     }
@@ -589,7 +490,7 @@ class JobManager extends EventEmitter {
    * Use this when a job is stuck and won't respond to normal cancellation
    */
   async forceFailJob(jobId: string): Promise<boolean> {
-    const meta = this.jobs.get(jobId);
+    const meta = this.repository.getFromCache(jobId);
     if (!meta) {
       return false;
     }
@@ -613,7 +514,7 @@ class JobManager extends EventEmitter {
     meta.completedAt = new Date().toISOString();
 
     // Update job meta file
-    await this.saveJobMeta(jobId, meta);
+    await this.repository.saveJobMeta(jobId, meta);
 
     this.emit(`job:${jobId}`, {
       type: 'error',
@@ -627,80 +528,33 @@ class JobManager extends EventEmitter {
 
   /**
    * Get the currently active job (running or paused)
+   * Delegates to JobRepository
    */
   async getActiveJob(): Promise<JobMeta | null> {
-    // Check in-memory jobs first
-    for (const meta of this.jobs.values()) {
-      if (meta.status === 'running' || meta.status === 'paused') {
-        return meta;
-      }
-    }
-
-    // Check persisted jobs
-    const allJobs = await this.listJobs();
-    for (const job of allJobs) {
-      if (job.status === 'running' || job.status === 'paused') {
-        return job;
-      }
-    }
-
-    return null;
+    return this.repository.getActiveJob();
   }
 
   /**
    * List all jobs
+   * Delegates to JobRepository
    */
   async listJobs(): Promise<JobMeta[]> {
-    const jobsBase = getJobsBasePath();
-    const jobs: JobMeta[] = [];
-
-    try {
-      const entries = await fs.readdir(jobsBase, { withFileTypes: true });
-
-      for (const entry of entries) {
-        if (entry.isDirectory()) {
-          const meta = await this.getJobMeta(entry.name);
-          if (meta) {
-            jobs.push(meta);
-          }
-        }
-      }
-    } catch {
-      // Jobs directory might not exist yet
-    }
-
-    return jobs.sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
+    return this.repository.listJobs();
   }
 
   /**
    * Update job status
+   * Delegates to JobRepository
    */
   private async updateJobStatus(jobId: string, status: JobStatus, progress: number, error?: string): Promise<void> {
-    const meta = this.jobs.get(jobId);
-    if (!meta) {
-      return;
-    }
-
-    meta.status = status;
-    meta.progress = progress;
-    meta.updatedAt = new Date().toISOString();
-
-    if (status === 'completed' || status === 'failed' || status === 'cancelled') {
-      meta.completedAt = new Date().toISOString();
-    }
-
-    if (error) {
-      meta.error = error;
-    }
-
-    await this.saveJobMeta(jobId, meta);
+    await this.repository.updateStatus(jobId, status, progress, error);
   }
 
   /**
    * Update job from runner event
    */
   private updateJobFromEvent(jobId: string, event: RunnerEvent): void {
-    const meta = this.jobs.get(jobId);
+    const meta = this.repository.getFromCache(jobId);
     if (!meta) {
       return;
     }
@@ -723,17 +577,7 @@ class JobManager extends EventEmitter {
     }
 
     meta.updatedAt = new Date().toISOString();
-    this.saveJobMeta(jobId, meta).catch(console.error);
-  }
-
-  /**
-   * Save job metadata to disk
-   */
-  private async saveJobMeta(jobId: string, meta: JobMeta): Promise<void> {
-    const paths = getJobPaths(jobId);
-    const metaPath = path.join(paths.jobDir, 'job-meta.json');
-    await ensureDir(paths.jobDir);
-    await writeJson(metaPath, meta);
+    this.repository.saveJobMeta(jobId, meta).catch(console.error);
   }
 }
 

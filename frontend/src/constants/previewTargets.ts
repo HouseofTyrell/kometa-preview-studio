@@ -1,7 +1,18 @@
 /**
  * Preview targets for testing overlays
- * Single source of truth for frontend components
+ *
+ * NOTE: The authoritative source of truth for preview targets is the backend.
+ * Use fetchPreviewTargets() to get the latest targets from the API.
+ *
+ * The static PREVIEW_TARGETS array below is kept for:
+ * 1. Offline/fallback mode
+ * 2. Type definitions
+ * 3. Initial render before API response
+ *
+ * @see GET /api/preview/targets
  */
+
+import { getPreviewTargets } from '../api/client';
 
 export type MediaType = 'movie' | 'show' | 'season' | 'episode';
 
@@ -188,4 +199,20 @@ export function filterTargetsByMediaType(
         return true;
     }
   });
+}
+
+/**
+ * Fetch preview targets from the backend API
+ * This is the recommended way to get targets - ensures sync with backend
+ *
+ * @returns Promise<PreviewTarget[]> - Targets from API or fallback to static
+ */
+export async function fetchPreviewTargets(): Promise<PreviewTarget[]> {
+  try {
+    const response = await getPreviewTargets();
+    return response.targets as PreviewTarget[];
+  } catch (error) {
+    console.warn('Failed to fetch preview targets from API, using fallback:', error);
+    return PREVIEW_TARGETS;
+  }
 }
