@@ -3,6 +3,7 @@ import * as fs from 'fs/promises';
 import * as path from 'path';
 import { EventEmitter } from 'events';
 import { ensureDir, writeText } from '../util/safeFs.js';
+import { dockerLogger } from '../util/logger.js';
 
 export interface RunnerConfig {
   kometaImage: string;
@@ -172,7 +173,7 @@ export class KometaRunner extends EventEmitter {
 
       // Handle stream errors
       stream.on('error', (err) => {
-        console.error(`Stream error for job ${jobId}:`, err);
+        dockerLogger.error({ jobId, err }, 'Stream error');
         this.emitEvent(jobId, {
           type: 'log',
           timestamp: new Date(),
@@ -318,6 +319,68 @@ export class KometaRunner extends EventEmitter {
   }
 
   /**
+   * Pre-pull the Docker image during server startup
+   * This prevents the first preview job from being blocked by image pull
+   *
+   * @param onProgress - Optional callback for pull progress updates
+   * @returns true if image was pulled, false if already available
+   */
+  async prePullImage(onProgress?: (message: string) => void): Promise<boolean> {
+    const log = onProgress || ((msg: string) => dockerLogger.info(msg));
+
+    try {
+      await this.docker.getImage(this.config.kometaImage).inspect();
+      log(`Docker image already available: ${this.config.kometaImage}`);
+      return false;
+    } catch {
+      // Image not found, pull it
+      log(`Pre-pulling Docker image: ${this.config.kometaImage}`);
+
+      await new Promise<void>((resolve, reject) => {
+        this.docker.pull(this.config.kometaImage, (err: Error | null, stream: NodeJS.ReadableStream) => {
+          if (err) {
+            reject(err);
+            return;
+          }
+
+          this.docker.modem.followProgress(
+            stream,
+            (err: Error | null) => {
+              if (err) {
+                reject(err);
+              } else {
+                log(`Docker image pulled successfully: ${this.config.kometaImage}`);
+                resolve();
+              }
+            },
+            (event: { status?: string; progress?: string }) => {
+              // Progress callback - emit pull progress
+              if (event.status && onProgress) {
+                const progress = event.progress ? ` ${event.progress}` : '';
+                onProgress(`  ${event.status}${progress}`);
+              }
+            }
+          );
+        });
+      });
+
+      return true;
+    }
+  }
+
+  /**
+   * Check if Docker is available
+   */
+  async checkDockerAvailable(): Promise<boolean> {
+    try {
+      await this.docker.ping();
+      return true;
+    } catch {
+      return false;
+    }
+  }
+
+  /**
    * Cancel a running job
    */
   async cancel(jobId: string): Promise<boolean> {
@@ -368,7 +431,7 @@ export class KometaRunner extends EventEmitter {
 
       return true;
     } catch (err) {
-      console.error(`Failed to pause job ${jobId}:`, err);
+      dockerLogger.error({ jobId, err }, 'Failed to pause job');
       return false;
     }
   }
@@ -398,7 +461,7 @@ export class KometaRunner extends EventEmitter {
 
       return true;
     } catch (err) {
-      console.error(`Failed to resume job ${jobId}:`, err);
+      dockerLogger.error({ jobId, err }, 'Failed to resume job');
       return false;
     }
   }

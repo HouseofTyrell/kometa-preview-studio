@@ -41,6 +41,34 @@ $RepoRoot = Split-Path -Parent $ScriptDir
 Write-Info "Changing to repository root: $RepoRoot"
 Set-Location $RepoRoot
 
+# Detect compose command (v2 or v1)
+$script:ComposeCmd = $null
+
+$null = docker compose version 2>&1
+if ($LASTEXITCODE -eq 0) {
+    $script:ComposeCmd = "docker compose"
+} else {
+    $null = docker-compose version 2>&1
+    if ($LASTEXITCODE -eq 0) {
+        $script:ComposeCmd = "docker-compose"
+    }
+}
+
+if (-not $script:ComposeCmd) {
+    Write-Err "docker-compose is not available."
+    exit 1
+}
+
+function Invoke-Compose {
+    param([string]$Arguments)
+    if ($script:ComposeCmd -eq "docker compose") {
+        Invoke-Expression "docker compose $Arguments"
+    } else {
+        Invoke-Expression "docker-compose $Arguments"
+    }
+    return $LASTEXITCODE
+}
+
 # Warning prompt
 Write-Host ""
 Write-Warn "=========================================="
@@ -64,7 +92,7 @@ Write-Host ""
 # Remove containers and volumes
 Write-Info "Stopping containers and removing volumes..."
 
-docker-compose down -v --remove-orphans
+$null = Invoke-Compose "down -v --remove-orphans"
 if ($LASTEXITCODE -ne 0) {
     Write-Err "docker-compose down failed"
     exit 1
@@ -74,7 +102,7 @@ Write-Success "Containers and volumes removed"
 # Rebuild without cache
 Write-Info "Rebuilding images without cache (this may take several minutes)..."
 
-docker-compose build --no-cache
+$null = Invoke-Compose "build --no-cache"
 if ($LASTEXITCODE -ne 0) {
     Write-Err "docker-compose build --no-cache failed"
     exit 1

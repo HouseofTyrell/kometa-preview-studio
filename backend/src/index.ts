@@ -15,6 +15,8 @@ import { ensureDir } from './util/safeFs.js';
 import { getJobsBasePath, getFontsPath } from './jobs/paths.js';
 import { DEFAULT_PORT, DEFAULT_HOST, DEFAULT_CORS_ORIGIN } from './constants.js';
 import { initializeProfileStore } from './storage/profileStore.js';
+import { getJobManager } from './jobs/jobManager.js';
+import { serverLogger, dockerLogger, apiLogger } from './util/logger.js';
 
 // Load environment variables from process.env (with constants as defaults)
 const PORT = parseInt(process.env.PORT || String(DEFAULT_PORT), 10);
@@ -26,10 +28,10 @@ async function main() {
   const jobsPath = getJobsBasePath();
   const fontsPath = getFontsPath();
 
-  console.log('Kometa Preview Studio - Backend');
-  console.log('================================');
-  console.log(`Jobs directory: ${jobsPath}`);
-  console.log(`Fonts directory: ${fontsPath}`);
+  serverLogger.info('Kometa Preview Studio - Backend');
+  serverLogger.info('================================');
+  serverLogger.info({ jobsPath }, 'Jobs directory configured');
+  serverLogger.info({ fontsPath }, 'Fonts directory configured');
 
   await ensureDir(jobsPath);
 
@@ -90,7 +92,7 @@ async function main() {
 
   // Error handling middleware
   app.use((err: Error, req: express.Request, res: express.Response, next: express.NextFunction) => {
-    console.error('Unhandled error:', err);
+    apiLogger.error({ err, path: req.path, method: req.method }, 'Unhandled error');
 
     // Handle multer errors
     if (err.name === 'MulterError') {
@@ -117,32 +119,70 @@ async function main() {
 
   // Start server
   app.listen(PORT, HOST, () => {
-    console.log(`\nServer running at http://${HOST}:${PORT}`);
-    console.log(`\nAPI Endpoints:`);
-    console.log(`  POST /api/config           - Upload/paste Kometa config`);
-    console.log(`  GET  /api/config/:id       - Get saved profile`);
-    console.log(`  POST /api/preview/start    - Start preview job`);
-    console.log(`  GET  /api/preview/status/:id - Get job status`);
-    console.log(`  GET  /api/preview/events/:id - SSE stream of job events`);
-    console.log(`  GET  /api/preview/artifacts/:id - Get job artifacts`);
-    console.log(`  GET  /api/preview/image/:id/:folder/:file - Serve image`);
-    console.log(`  GET  /api/preview/logs/:id - Get job logs`);
-    console.log(`\nReady to accept requests.\n`);
+    serverLogger.info({ host: HOST, port: PORT }, `Server running at http://${HOST}:${PORT}`);
+    serverLogger.info('API Endpoints:');
+    serverLogger.info('  POST /api/config           - Upload/paste Kometa config');
+    serverLogger.info('  GET  /api/config/:id       - Get saved profile');
+    serverLogger.info('  POST /api/preview/start    - Start preview job');
+    serverLogger.info('  GET  /api/preview/status/:id - Get job status');
+    serverLogger.info('  GET  /api/preview/events/:id - SSE stream of job events');
+    serverLogger.info('  GET  /api/preview/artifacts/:id - Get job artifacts');
+    serverLogger.info('  GET  /api/preview/image/:id/:folder/:file - Serve image');
+    serverLogger.info('  GET  /api/preview/logs/:id - Get job logs');
+    serverLogger.info('Ready to accept requests.');
+
+    // Pre-pull Docker image in background (non-blocking)
+    // This ensures the first preview job doesn't wait for image download
+    prePullDockerImageInBackground();
   });
+}
+
+/**
+ * Pre-pull the Kometa renderer Docker image in the background
+ * This runs after server startup to ensure fast first preview
+ */
+async function prePullDockerImageInBackground(): Promise<void> {
+  const jobManager = getJobManager();
+
+  // First check if Docker is available
+  const dockerAvailable = await jobManager.checkDockerAvailable();
+  if (!dockerAvailable) {
+    dockerLogger.warn('Docker is not available. Image pre-pull skipped.');
+    dockerLogger.warn('Preview jobs will fail until Docker is running.');
+    return;
+  }
+
+  dockerLogger.info('Checking renderer image availability...');
+
+  try {
+    const wasPulled = await jobManager.prePullDockerImage((message) => {
+      dockerLogger.info(message);
+    });
+
+    if (wasPulled) {
+      dockerLogger.info('Renderer image pre-pull complete. Ready for preview jobs.');
+    } else {
+      dockerLogger.info('Renderer image already available. Ready for preview jobs.');
+    }
+  } catch (error) {
+    const message = error instanceof Error ? error.message : 'Unknown error';
+    dockerLogger.error({ err: error }, `Failed to pre-pull image: ${message}`);
+    dockerLogger.warn('First preview job may be slow while the image downloads.');
+  }
 }
 
 // Handle uncaught errors
 process.on('uncaughtException', (err) => {
-  console.error('Uncaught exception:', err);
+  serverLogger.fatal({ err }, 'Uncaught exception');
   process.exit(1);
 });
 
 process.on('unhandledRejection', (reason, promise) => {
-  console.error('Unhandled rejection at:', promise, 'reason:', reason);
+  serverLogger.error({ reason }, 'Unhandled rejection');
 });
 
 // Run
 main().catch((err) => {
-  console.error('Failed to start server:', err);
+  serverLogger.fatal({ err }, 'Failed to start server');
   process.exit(1);
 });

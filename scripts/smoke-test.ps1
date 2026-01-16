@@ -171,7 +171,7 @@ if (-not $Failed) {
     Write-Host "========================================"
     Write-Host ""
     Write-Host "Troubleshooting tips:"
-    Write-Host "  - Check container logs: docker-compose logs backend"
+    Write-Host "  - Check container logs: docker compose logs backend"
     Write-Host "  - Check job logs: Get-Content `"$JobDir\logs\container.log`""
     Write-Host "  - Verify Plex is accessible from Docker"
     Write-Host "  - Ensure preview targets exist in your Plex library"

@@ -78,9 +78,20 @@ The current version previews 5 static items:
 
 > **Note**: The first build will pull the Kometa base image which may take a few minutes depending on your connection speed.
 
-#### One-click (Windows)
+#### One-click Scripts (Linux/macOS/Windows)
 
-For Windows users, we provide convenient scripts that automate the entire setup process:
+We provide convenient scripts that automate the entire setup process on all platforms.
+
+**Linux/macOS:**
+```bash
+./scripts/start.sh     # Start the application (auto-setup on first run)
+./scripts/stop.sh      # Stop all containers
+./scripts/logs.sh      # View live container logs (Ctrl+C to exit)
+./scripts/reset.sh     # Full reset: remove volumes, rebuild without cache
+./scripts/smoke-test.sh # Verify a preview job completed successfully
+```
+
+**Windows (double-click .bat or run .ps1 in PowerShell):**
 
 **Quick Start:**
 1. Double-click `scripts\start.bat` (or run `.\scripts\start.ps1` in PowerShell)
@@ -115,7 +126,7 @@ The **Config** page in the UI also includes System Controls for **Start**, **Sto
 .\scripts\reset.ps1   # Full reset
 ```
 
-> **Note**: The scripts use `docker-compose` (not `docker compose`) and require Docker Desktop to be running. PowerShell 5.1+ is required (included with Windows 10/11).
+> **Note**: The scripts support both `docker compose` (v2) and `docker-compose` (v1). Docker Desktop is required on Windows. PowerShell 5.1+ is required (included with Windows 10/11).
 
 ### Option 2: Local Development
 

@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback, useMemo } from 'react'
+import { useReducer, useEffect, useCallback, useMemo } from 'react'
 import PreviewTile from '../components/PreviewTile'
 import LogPanel from '../components/LogPanel'
 import TestOptionsPanel from '../components/TestOptionsPanel'
@@ -26,21 +26,163 @@ interface PreviewPageProps {
   overlayFiles?: string[]
 }
 
+// State shape for the preview page
+interface PreviewState {
+  jobId: string | null
+  status: JobStatus | null
+  artifacts: JobArtifacts | null
+  logs: JobEvent[]
+  error: string | null
+  isRunning: boolean
+  isPaused: boolean
+  testOptions: TestOptions
+  reconnecting: boolean
+}
+
+// Action types for state transitions
+type PreviewAction =
+  | { type: 'START_PREVIEW' }
+  | { type: 'SET_JOB_ID'; jobId: string }
+  | { type: 'SET_STATUS'; status: JobStatus | null }
+  | { type: 'SET_ARTIFACTS'; artifacts: JobArtifacts | null }
+  | { type: 'ADD_LOG'; event: JobEvent }
+  | { type: 'SET_LOGS'; logs: JobEvent[] }
+  | { type: 'SET_ERROR'; error: string | null }
+  | { type: 'JOB_PAUSED' }
+  | { type: 'JOB_RESUMED' }
+  | { type: 'JOB_STOPPED' }
+  | { type: 'JOB_COMPLETED' }
+  | { type: 'JOB_FAILED'; error?: string }
+  | { type: 'SET_TEST_OPTIONS'; options: TestOptions }
+  | { type: 'SET_RECONNECTING'; reconnecting: boolean }
+  | { type: 'RECONNECT_TO_JOB'; jobId: string; status: 'running' | 'paused' }
+  | { type: 'UPDATE_STATUS_AND_ARTIFACTS'; status: JobStatus; artifacts: JobArtifacts | null }
+
+// Initial state
+const initialState: PreviewState = {
+  jobId: null,
+  status: null,
+  artifacts: null,
+  logs: [],
+  error: null,
+  isRunning: false,
+  isPaused: false,
+  testOptions: DEFAULT_TEST_OPTIONS,
+  reconnecting: false,
+}
+
+// Reducer function handles all state transitions
+function previewReducer(state: PreviewState, action: PreviewAction): PreviewState {
+  switch (action.type) {
+    case 'START_PREVIEW':
+      return {
+        ...state,
+        error: null,
+        logs: [],
+        artifacts: null,
+        isRunning: true,
+        isPaused: false,
+      }
+
+    case 'SET_JOB_ID':
+      return {
+        ...state,
+        jobId: action.jobId,
+        logs: [{ type: 'log', timestamp: new Date().toISOString(), message: `Job started: ${action.jobId}` }],
+      }
+
+    case 'SET_STATUS':
+      return { ...state, status: action.status }
+
+    case 'SET_ARTIFACTS':
+      return { ...state, artifacts: action.artifacts }
+
+    case 'ADD_LOG':
+      return { ...state, logs: [...state.logs, action.event] }
+
+    case 'SET_LOGS':
+      return { ...state, logs: action.logs }
+
+    case 'SET_ERROR':
+      return {
+        ...state,
+        error: action.error,
+        isRunning: action.error ? false : state.isRunning,
+      }
+
+    case 'JOB_PAUSED':
+      return {
+        ...state,
+        isPaused: true,
+        logs: [...state.logs, { type: 'log', timestamp: new Date().toISOString(), message: 'Job paused' }],
+      }
+
+    case 'JOB_RESUMED':
+      return {
+        ...state,
+        isPaused: false,
+        logs: [...state.logs, { type: 'log', timestamp: new Date().toISOString(), message: 'Job resumed' }],
+      }
+
+    case 'JOB_STOPPED':
+      return {
+        ...state,
+        isRunning: false,
+        isPaused: false,
+        logs: [...state.logs, { type: 'log', timestamp: new Date().toISOString(), message: 'Job stopped' }],
+      }
+
+    case 'JOB_COMPLETED':
+      return {
+        ...state,
+        isRunning: false,
+        isPaused: false,
+      }
+
+    case 'JOB_FAILED':
+      return {
+        ...state,
+        isRunning: false,
+        isPaused: false,
+        error: action.error || state.error,
+      }
+
+    case 'SET_TEST_OPTIONS':
+      return { ...state, testOptions: action.options }
+
+    case 'SET_RECONNECTING':
+      return { ...state, reconnecting: action.reconnecting }
+
+    case 'RECONNECT_TO_JOB':
+      return {
+        ...state,
+        jobId: action.jobId,
+        isRunning: action.status === 'running',
+        isPaused: action.status === 'paused',
+        logs: [{ type: 'log', timestamp: new Date().toISOString(), message: `Reconnected to job: ${action.jobId}` }],
+      }
+
+    case 'UPDATE_STATUS_AND_ARTIFACTS':
+      return {
+        ...state,
+        status: action.status,
+        artifacts: action.artifacts,
+      }
+
+    default:
+      return state
+  }
+}
+
 function PreviewPage({
   profileId,
   configYaml,
   libraryNames = [],
   overlayFiles = [],
 }: PreviewPageProps) {
-  const [jobId, setJobId] = useState<string | null>(null)
-  const [status, setStatus] = useState<JobStatus | null>(null)
-  const [artifacts, setArtifacts] = useState<JobArtifacts | null>(null)
-  const [logs, setLogs] = useState<JobEvent[]>([])
-  const [error, setError] = useState<string | null>(null)
-  const [isRunning, setIsRunning] = useState(false)
-  const [isPaused, setIsPaused] = useState(false)
-  const [testOptions, setTestOptions] = useState<TestOptions>(DEFAULT_TEST_OPTIONS)
-  const [reconnecting, setReconnecting] = useState(false)
+  const [state, dispatch] = useReducer(previewReducer, initialState)
+
+  const { jobId, status, artifacts, logs, error, isRunning, isPaused, testOptions, reconnecting } = state
 
   // Calculate which targets to display based on test options
   const visibleTargets = useMemo(() => {
@@ -57,19 +199,16 @@ function PreviewPage({
 
   const handleStartPreview = async () => {
     if (!configYaml) {
-      setError('Please upload a config first')
+      dispatch({ type: 'SET_ERROR', error: 'Please upload a config first' })
       return
     }
 
     if (visibleTargets.length === 0) {
-      setError('Please select at least one target to preview')
+      dispatch({ type: 'SET_ERROR', error: 'Please select at least one target to preview' })
       return
     }
 
-    setError(null)
-    setLogs([])
-    setArtifacts(null)
-    setIsRunning(true)
+    dispatch({ type: 'START_PREVIEW' })
 
     try {
       const result = await startPreview({
@@ -78,20 +217,18 @@ function PreviewPage({
         testOptions,
       })
 
-      setJobId(result.jobId)
-      setLogs([{ type: 'log', timestamp: new Date().toISOString(), message: `Job started: ${result.jobId}` }])
+      dispatch({ type: 'SET_JOB_ID', jobId: result.jobId })
 
       // Fetch artifacts immediately to show "before" images
       try {
         const initialArtifacts = await getJobArtifacts(result.jobId)
-        setArtifacts(initialArtifacts)
+        dispatch({ type: 'SET_ARTIFACTS', artifacts: initialArtifacts })
       } catch {
         // Artifacts may not be ready yet, polling will pick them up
       }
 
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'Failed to start preview')
-      setIsRunning(false)
+      dispatch({ type: 'SET_ERROR', error: err instanceof Error ? err.message : 'Failed to start preview' })
     }
   }
 
@@ -99,10 +236,9 @@ function PreviewPage({
     if (!jobId) return
     try {
       await pauseJob(jobId)
-      setIsPaused(true)
-      setLogs((prev) => [...prev, { type: 'log', timestamp: new Date().toISOString(), message: 'Job paused' }])
+      dispatch({ type: 'JOB_PAUSED' })
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'Failed to pause job')
+      dispatch({ type: 'SET_ERROR', error: err instanceof Error ? err.message : 'Failed to pause job' })
     }
   }
 
@@ -110,10 +246,9 @@ function PreviewPage({
     if (!jobId) return
     try {
       await resumeJob(jobId)
-      setIsPaused(false)
-      setLogs((prev) => [...prev, { type: 'log', timestamp: new Date().toISOString(), message: 'Job resumed' }])
+      dispatch({ type: 'JOB_RESUMED' })
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'Failed to resume job')
+      dispatch({ type: 'SET_ERROR', error: err instanceof Error ? err.message : 'Failed to resume job' })
     }
   }
 
@@ -121,14 +256,12 @@ function PreviewPage({
     if (!jobId) return
     try {
       await cancelJob(jobId)
-      setIsRunning(false)
-      setIsPaused(false)
-      setLogs((prev) => [...prev, { type: 'log', timestamp: new Date().toISOString(), message: 'Job stopped' }])
+      dispatch({ type: 'JOB_STOPPED' })
       // Fetch final status
       const statusResult = await getJobStatus(jobId)
-      setStatus(statusResult)
+      dispatch({ type: 'SET_STATUS', status: statusResult })
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'Failed to stop job')
+      dispatch({ type: 'SET_ERROR', error: err instanceof Error ? err.message : 'Failed to stop job' })
     }
   }
 
@@ -139,41 +272,40 @@ function PreviewPage({
     }
     try {
       await forceDeleteJob(jobId)
-      setIsRunning(false)
-      setIsPaused(false)
-      setLogs((prev) => [...prev, { type: 'log', timestamp: new Date().toISOString(), message: 'Job forcefully terminated' }])
+      dispatch({ type: 'JOB_STOPPED' })
       // Fetch final status
       const statusResult = await getJobStatus(jobId)
-      setStatus(statusResult)
+      dispatch({ type: 'SET_STATUS', status: statusResult })
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'Failed to force stop job')
+      dispatch({ type: 'SET_ERROR', error: err instanceof Error ? err.message : 'Failed to force stop job' })
     }
   }
+
+  const handleTestOptionsChange = useCallback((options: TestOptions) => {
+    dispatch({ type: 'SET_TEST_OPTIONS', options })
+  }, [])
 
   // Check for active job on mount (allows frontend to reconnect to running jobs)
   useEffect(() => {
     const checkActiveJob = async () => {
       try {
-        setReconnecting(true)
+        dispatch({ type: 'SET_RECONNECTING', reconnecting: true })
         const result = await getActiveJob()
         if (result.hasActiveJob && result.job) {
-          setJobId(result.job.jobId)
-          setIsRunning(result.job.status === 'running')
-          setIsPaused(result.job.status === 'paused')
-          setLogs([{ type: 'log', timestamp: new Date().toISOString(), message: `Reconnected to job: ${result.job.jobId}` }])
+          const jobStatus = result.job.status as 'running' | 'paused'
+          dispatch({ type: 'RECONNECT_TO_JOB', jobId: result.job.jobId, status: jobStatus })
 
           // Fetch current status and artifacts
           const [statusResult, artifactsResult] = await Promise.all([
             getJobStatus(result.job.jobId),
             getJobArtifacts(result.job.jobId),
           ])
-          setStatus(statusResult)
-          setArtifacts(artifactsResult)
+          dispatch({ type: 'UPDATE_STATUS_AND_ARTIFACTS', status: statusResult, artifacts: artifactsResult })
         }
       } catch (err) {
         console.error('Failed to check for active job:', err)
       } finally {
-        setReconnecting(false)
+        dispatch({ type: 'SET_RECONNECTING', reconnecting: false })
       }
     }
 
@@ -187,33 +319,33 @@ function PreviewPage({
     const unsubscribe = subscribeToJobEvents(
       jobId,
       (event) => {
-        setLogs((prev) => [...prev, event])
+        dispatch({ type: 'ADD_LOG', event })
 
         if (event.type === 'progress' && event.progress !== undefined) {
-          setStatus((prev) => prev ? { ...prev, progress: event.progress! } : null)
+          dispatch({ type: 'SET_STATUS', status: status ? { ...status, progress: event.progress! } : null })
           // Check for paused state from event data
           if (event.message === 'Job paused') {
-            setIsPaused(true)
+            dispatch({ type: 'JOB_PAUSED' })
           } else if (event.message === 'Job resumed') {
-            setIsPaused(false)
+            dispatch({ type: 'JOB_RESUMED' })
           }
         }
 
-        if (event.type === 'complete' || event.type === 'error') {
-          setIsRunning(false)
-          setIsPaused(false)
-          // Fetch final status and artifacts
+        if (event.type === 'complete') {
+          dispatch({ type: 'JOB_COMPLETED' })
+          fetchStatusAndArtifacts(jobId)
+        } else if (event.type === 'error') {
+          dispatch({ type: 'JOB_FAILED' })
           fetchStatusAndArtifacts(jobId)
         }
       },
       (err) => {
-        setError(err.message)
-        setIsRunning(false)
+        dispatch({ type: 'JOB_FAILED', error: err.message })
       }
     )
 
     return unsubscribe
-  }, [jobId])
+  }, [jobId, status])
 
   const fetchStatusAndArtifacts = useCallback(async (id: string) => {
     try {
@@ -221,8 +353,7 @@ function PreviewPage({
         getJobStatus(id),
         getJobArtifacts(id),
       ])
-      setStatus(statusResult)
-      setArtifacts(artifactsResult)
+      dispatch({ type: 'UPDATE_STATUS_AND_ARTIFACTS', status: statusResult, artifacts: artifactsResult })
     } catch (err) {
       console.error('Failed to fetch status/artifacts:', err)
     }
@@ -239,8 +370,7 @@ function PreviewPage({
           getJobStatus(jobId),
           getJobArtifacts(jobId),
         ])
-        setStatus(statusResult)
-        setArtifacts(artifactsResult)
+        dispatch({ type: 'UPDATE_STATUS_AND_ARTIFACTS', status: statusResult, artifacts: artifactsResult })
       } catch (err) {
         console.error('Status/artifacts poll failed:', err)
       }
@@ -325,7 +455,7 @@ function PreviewPage({
       {hasConfig && (
         <TestOptionsPanel
           options={testOptions}
-          onChange={setTestOptions}
+          onChange={handleTestOptionsChange}
           libraryNames={libraryNames}
           overlayFiles={overlayFiles}
           disabled={isRunning}

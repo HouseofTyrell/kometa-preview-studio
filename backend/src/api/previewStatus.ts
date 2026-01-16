@@ -1,6 +1,8 @@
 import { Router, Request, Response } from 'express';
 import { getJobManager } from '../jobs/jobManager.js';
 import { SSE_HEARTBEAT_INTERVAL_MS, SSE_CLOSE_DELAY_MS } from '../constants.js';
+import { PREVIEW_TARGETS } from '../plex/resolveTargets.js';
+import { apiLogger } from '../util/logger.js';
 
 const router = Router();
 
@@ -45,7 +47,7 @@ router.get('/status/:jobId', async (req: Request, res: Response) => {
     });
 
   } catch (err) {
-    console.error('Status error:', err);
+    apiLogger.error({ err }, 'Status error');
     res.status(500).json({
       error: 'Failed to get job status',
       details: err instanceof Error ? err.message : 'Unknown error',
@@ -144,7 +146,7 @@ router.post('/cancel/:jobId', async (req: Request, res: Response) => {
     }
 
   } catch (err) {
-    console.error('Cancel error:', err);
+    apiLogger.error({ err }, 'Cancel error');
     res.status(500).json({
       error: 'Failed to cancel job',
       details: err instanceof Error ? err.message : 'Unknown error',
@@ -174,7 +176,7 @@ router.delete('/force/:jobId', async (req: Request, res: Response) => {
     }
 
   } catch (err) {
-    console.error('Force delete error:', err);
+    apiLogger.error({ err }, 'Force delete error');
     res.status(500).json({
       error: 'Failed to force delete job',
       details: err instanceof Error ? err.message : 'Unknown error',
@@ -203,7 +205,7 @@ router.post('/pause/:jobId', async (req: Request, res: Response) => {
     }
 
   } catch (err) {
-    console.error('Pause error:', err);
+    apiLogger.error({ err }, 'Pause error');
     res.status(500).json({
       error: 'Failed to pause job',
       details: err instanceof Error ? err.message : 'Unknown error',
@@ -232,7 +234,7 @@ router.post('/resume/:jobId', async (req: Request, res: Response) => {
     }
 
   } catch (err) {
-    console.error('Resume error:', err);
+    apiLogger.error({ err }, 'Resume error');
     res.status(500).json({
       error: 'Failed to resume job',
       details: err instanceof Error ? err.message : 'Unknown error',
@@ -265,7 +267,7 @@ router.get('/active', async (req: Request, res: Response) => {
     }
 
   } catch (err) {
-    console.error('Get active job error:', err);
+    apiLogger.error({ err }, 'Get active job error');
     res.status(500).json({
       error: 'Failed to get active job',
       details: err instanceof Error ? err.message : 'Unknown error',
@@ -294,12 +296,48 @@ router.get('/jobs', async (req: Request, res: Response) => {
     });
 
   } catch (err) {
-    console.error('List jobs error:', err);
+    apiLogger.error({ err }, 'List jobs error');
     res.status(500).json({
       error: 'Failed to list jobs',
       details: err instanceof Error ? err.message : 'Unknown error',
     });
   }
 });
+
+/**
+ * GET /api/preview/targets
+ * Get available preview targets (single source of truth)
+ * Frontend should fetch this instead of hardcoding targets
+ */
+router.get('/targets', (_req: Request, res: Response) => {
+  // Transform backend targets to frontend-compatible format
+  const targets = PREVIEW_TARGETS.map((t) => ({
+    id: t.id,
+    label: t.label.replace(/ — .*$/, ''), // Strip type suffix from label
+    type: t.type,
+    displayType: getDisplayType(t.type, t.seasonIndex, t.episodeIndex),
+    metadata: t.metadata,
+  }));
+
+  res.json({ targets });
+});
+
+/**
+ * Get human-readable display type for a target
+ */
+function getDisplayType(type: string, seasonIndex?: number, episodeIndex?: number): string {
+  switch (type) {
+    case 'movie':
+      return 'Movie';
+    case 'show':
+      return 'Series';
+    case 'season':
+      return `Season ${seasonIndex || 1}`;
+    case 'episode':
+      return `S${String(seasonIndex || 1).padStart(2, '0')}E${String(episodeIndex || 1).padStart(2, '0')}`;
+    default:
+      return type;
+  }
+}
 
 export default router;

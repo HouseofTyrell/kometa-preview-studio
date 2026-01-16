@@ -2,182 +2,165 @@
 
 This document tracks technical debt, code quality issues, and planned improvements for Kometa Preview Studio.
 
+**Last Updated:** 2026-01-16
+
 ---
 
-## Critical Issues (Must Fix Before Production)
+## Recently Resolved Issues
 
-### 1. Zero Test Coverage
-**Priority:** CRITICAL
-**Impact:** Cannot safely refactor, no regression protection
-**Location:** Entire codebase
+### ✅ 1. Zero Test Coverage → Test Framework Set Up
+**Status:** RESOLVED
+**Resolution Date:** 2026-01-16
+
+- Jest configured for backend with ESM support (`jest.config.js`)
+- Vitest configured for frontend with React Testing Library
+- Initial unit tests for `yaml.ts`, `hash.ts`, `resolveTargets.ts`, `configGenerator.ts`
+- Run: `npm test` in backend/frontend directories
+
+---
+
+### ✅ 2. In-Memory Profile Storage → Persistent Storage
+**Status:** RESOLVED (Previously)
+
+`ProfileStore` now persists profiles to disk in `/jobs/profiles/` with in-memory caching.
+
+---
+
+### ✅ 3. Status Enum Mismatch → Fixed
+**Status:** RESOLVED (Previously)
+
+Frontend and backend now use consistent status values: `'pending' | 'running' | 'paused' | 'completed' | 'failed' | 'cancelled'`
+
+---
+
+### ✅ 4. Input Validation → Zod Schema Validation
+**Status:** RESOLVED
+**Resolution Date:** 2026-01-16
+
+- Added `configSchema.ts` with Zod schemas for Kometa config validation
+- Config uploads now validated for structure before processing
+- Preview requirements validated with warnings returned to frontend
+- Zod added to dependencies
+
+---
+
+### ✅ 7. JobManager Does Too Much → Extracted Classes
+**Status:** RESOLVED
+**Resolution Date:** 2026-01-16
+
+- Extracted `JobRepository` class for job persistence operations
+- Extracted `ArtifactManager` class for image/log retrieval
+- `JobManager` reduced to orchestration role (~400 lines from 791)
+- Clear separation of concerns between components
+
+---
+
+### ✅ 9. Hardcoded Preview Targets → Backend API
+**Status:** RESOLVED
+**Resolution Date:** 2026-01-16
+
+- Added `GET /api/preview/targets` endpoint
+- Frontend can fetch targets via `fetchPreviewTargets()`
+- Single source of truth in `backend/src/plex/resolveTargets.ts`
+- Frontend falls back to static values if API unavailable
+
+---
+
+### ✅ 5. Docker Image Pull Blocks Requests → Pre-pull on Startup
+**Status:** RESOLVED
+**Resolution Date:** 2026-01-16
+
+- Added `prePullImage()` method to `KometaRunner` class
+- Added `checkDockerAvailable()` method for Docker availability check
+- Server startup calls `prePullDockerImageInBackground()` after listen
+- Progress messages logged during pull
+- Graceful handling when Docker unavailable
+
+---
+
+## Remaining High Priority Issues
+
+### Expand Test Coverage
+**Priority:** HIGH
+**Impact:** Limited regression protection
+
+**Current State:**
+- Test framework configured ✅
+- Basic unit tests for pure functions ✅
+- Missing: Integration tests, E2E tests, Plex client mocks
 
 **Action Items:**
-- [ ] Set up Jest for backend (`npm install --save-dev jest @types/jest ts-jest`)
-- [ ] Set up Vitest for frontend (`npm install --save-dev vitest @testing-library/react`)
-- [ ] Write unit tests for critical paths:
-  - `plexClient.ts` - Search and metadata fetching
-  - `yaml.ts` - Config parsing and validation
-  - `resolveTargets.ts` - Target filtering logic
-  - `configGenerator.ts` - Preview config generation
 - [ ] Add integration tests for API endpoints
+- [ ] Add tests for `plexClient.ts` with mocked HTTP
 - [ ] Target 80% coverage for core modules
+- [ ] Add E2E test for full preview workflow
 
 ---
 
-### 2. In-Memory Profile Storage
-**Priority:** HIGH
-**Impact:** Data loss on server restart
-**Location:** `backend/src/api/configUpload.ts:14`
-
-```typescript
-const profiles = new Map<string, Profile>();  // Lost on restart!
-```
-
-**Action Items:**
-- [ ] Create `ProfileRepository` interface
-- [ ] Implement file-based storage (`data/profiles.json`)
-- [ ] Add atomic writes with temp file + rename pattern
-- [ ] Add LRU cache with max 100 profiles
-
----
-
-### 3. Status Enum Mismatch (Frontend/Backend)
-**Priority:** HIGH
-**Impact:** API contract broken
-
-**Backend** (`backend/src/jobs/jobManager.ts:15`):
-```typescript
-type JobStatus = 'pending' | 'running' | 'completed' | 'failed' | 'cancelled';
-```
-
-**Frontend** (`frontend/src/api/client.ts:16`):
-```typescript
-status: 'queued' | 'resolving' | 'fetching' | 'rendering' | 'succeeded' | 'failed' | 'cancelled';
-```
-
-**Action Items:**
-- [ ] Create shared types package or file
-- [ ] Sync status values between frontend and backend
-- [ ] Add runtime validation
-
----
-
-### 4. Input Validation
-**Priority:** HIGH
-**Impact:** Security vulnerability
-**Location:** `backend/src/index.ts:47-58`, `backend/src/util/yaml.ts`
-
-**Current Issues:**
-- MIME type validation can be bypassed
-- No schema validation for YAML content
-- No environment variable validation
-
-**Action Items:**
-- [ ] Install `zod` for runtime validation
-- [ ] Create Kometa config schema
-- [ ] Validate config structure after parsing
-- [ ] Validate environment variables on startup
-
----
-
-## High Priority Issues
-
-### 5. Docker Image Pull Blocks Requests
-**Priority:** HIGH
-**Impact:** First preview can take minutes
-**Location:** `backend/src/kometa/runner.ts:276-303`
-
-**Action Items:**
-- [ ] Pre-pull image during server initialization
-- [ ] Add progress events during pull
-- [ ] Cache pull status to avoid repeated checks
-
----
-
-### 6. Code Duplication in Plex Client
+### Console.log Migration to Pino (Partial)
 **Priority:** MEDIUM-HIGH
-**Impact:** Maintenance burden, bug surface
-**Location:** `backend/src/plex/plexClient.ts:114-259`
+**Impact:** No structured logging, hard to debug production issues
+**Status:** IN PROGRESS
 
-`searchMovies()` and `searchShows()` share ~130 lines of identical logic.
+**Completed:**
+- [x] Install `pino` and `pino-pretty` for structured logging
+- [x] Create logger utility (`backend/src/util/logger.ts`) with component loggers
+- [x] Migrate `index.ts` to use structured logging
+- [x] Migrate `jobManager.ts` to use structured logging
+- [x] Migrate `runner.ts` to use structured logging
+- [x] Add log levels (debug, info, warn, error)
 
-**Action Items:**
-- [ ] Extract common search logic to `searchByType(type, title, year?)`
-- [ ] Use generics for return types
-- [ ] Add comprehensive tests before refactoring
-
----
-
-### 7. JobManager Does Too Much
-**Priority:** MEDIUM
-**Impact:** Hard to test and maintain
-**Location:** `backend/src/jobs/jobManager.ts` (575 lines)
-
-**Responsibilities (should be split):**
-- Job lifecycle management
-- Plex interaction orchestration
-- Artifact management
-- Event emission
-- Disk I/O
-
-**Action Items:**
-- [ ] Extract `ArtifactManager` class
-- [ ] Extract `JobRepository` class
-- [ ] Keep `JobOrchestrator` as coordinator
-- [ ] Define clear interfaces between components
+**Remaining Action Items:**
+- [ ] Migrate remaining ~170 console.log calls in other files
+- [ ] Add request logging middleware
+- [ ] Configure log aggregation for production
 
 ---
 
 ## Medium Priority Issues
 
-### 8. No Error Boundaries in React
-**Priority:** MEDIUM
-**Impact:** App crashes on component errors
-**Location:** `frontend/src/App.tsx`
+### ✅ 6. Code Duplication in Plex Client → Refactored
+**Status:** RESOLVED
+**Resolution Date:** 2026-01-16
 
-**Action Items:**
-- [ ] Create `ErrorBoundary` component
-- [ ] Wrap main routes with error boundary
-- [ ] Add fallback UI for errors
-
----
-
-### 9. Hardcoded Preview Targets in Frontend
-**Priority:** MEDIUM
-**Impact:** Duplication, out of sync
-**Location:** `frontend/src/pages/Preview.tsx:23-29`
-
-Same targets defined in:
-- `backend/src/plex/resolveTargets.ts:60-145`
-- `frontend/src/pages/Preview.tsx:23-29`
-- `frontend/src/components/TestOptionsPanel.tsx:8-14`
-
-**Action Items:**
-- [ ] Remove hardcoded targets from frontend
-- [ ] Fetch from `/api/preview/targets` on page load
-- [ ] Cache in component state
+- Extracted `searchByType()` for common section/type filtering logic
+- Extracted `searchInSection()` for search/fallback logic
+- Extracted `mapToMediaItem()` for response mapping
+- `searchMovies()` and `searchShows()` are now thin wrappers
+- Reduced code from ~130 duplicated lines to <30 lines each
 
 ---
 
-### 10. Complex State in Preview Page
+### 8. Error Boundaries in React
 **Priority:** MEDIUM
-**Impact:** Hard to reason about state changes
-**Location:** `frontend/src/pages/Preview.tsx:37-43`
+**Impact:** Unclear error handling
+**Location:** `frontend/src/components/ErrorBoundary.tsx`
 
-7 related state variables should use `useReducer`.
+`ErrorBoundary` component exists but needs verification that it wraps routes.
 
 **Action Items:**
-- [ ] Define `PreviewState` interface
-- [ ] Create `previewReducer` function
-- [ ] Replace useState calls with useReducer
-- [ ] Define action types for state transitions
+- [ ] Verify error boundary is wrapping routes in App.tsx
+- [ ] Add fallback UI for uncaught errors
+- [ ] Test error boundary behavior
+
+---
+
+### ✅ 10. Complex State in Preview Page → useReducer
+**Status:** RESOLVED
+**Resolution Date:** 2026-01-16
+
+- Defined `PreviewState` interface with all 9 state variables
+- Created `previewReducer` function with typed actions
+- Replaced 9 `useState` calls with single `useReducer`
+- Defined `PreviewAction` discriminated union for all state transitions
+- State transitions are now explicit and predictable
 
 ---
 
 ### 11. No Pagination for Job List
 **Priority:** MEDIUM
 **Impact:** Performance issue with many jobs
-**Location:** `backend/src/api/previewStatus.ts:143-166`
+**Location:** `backend/src/api/previewStatus.ts`
 
 **Action Items:**
 - [ ] Add `page` and `limit` query parameters
@@ -187,33 +170,47 @@ Same targets defined in:
 
 ---
 
-### 12. Silent Failures in Async Operations
+### Profile Expiry Not Communicated
 **Priority:** MEDIUM
-**Impact:** Hard to debug issues
-**Locations:**
-- `backend/src/jobs/jobManager.ts:343-350` - Returns null on error
-- `backend/src/plex/fetchArtwork.ts:55-63` - No error handling on copyFile
+**Impact:** Users may lose data unexpectedly
+**Location:** `backend/src/constants.ts`
+
+Profiles auto-expire after 24 hours with no warning to users.
 
 **Action Items:**
-- [ ] Add structured logging (pino or winston)
-- [ ] Distinguish between "not found" and "error"
-- [ ] Propagate errors with context
+- [ ] Add expiry timestamp to profile API response
+- [ ] Show warning in UI when profile expires soon
+- [ ] Consider configurable expiry time
+
+---
+
+### Instant Compositor HDR/DV Incomplete
+**Priority:** MEDIUM
+**Impact:** Draft previews don't match final for HDR/DV content
+**Location:** `renderer/instant_compositor.py:347-351`
+
+HDR/DV badges don't composite correctly in fast preview mode.
+
+**Action Items:**
+- [ ] Implement HDR/DV badge compositing
+- [ ] Or document as known limitation
 
 ---
 
 ## Low Priority Issues
 
-### 13. Magic Numbers
+### 13. Magic Numbers Remain
 **Priority:** LOW
-**Locations:**
-- `backend/src/plex/plexClient.ts:41` - `30000` timeout
-- `backend/src/index.ts:45` - `10 * 1024 * 1024` file size
-- Various poll intervals
+**Locations:** Various
+
+Some hardcoded values should be in constants:
+- Badge dimensions in `instant_compositor.py` (305, 105)
+- Poll intervals in frontend (2000ms)
 
 **Action Items:**
-- [ ] Extract to `constants.ts` file
-- [ ] Use descriptive constant names
-- [ ] Document units in names (e.g., `TIMEOUT_MS`)
+- [ ] Audit for remaining magic numbers
+- [ ] Extract to constants files
+- [ ] Document units in names
 
 ---
 
@@ -228,61 +225,37 @@ Same targets defined in:
 
 ---
 
-### 15. Inconsistent API Response Format
+### Community/Sharing APIs Documentation
 **Priority:** LOW
-**Impact:** API consumer confusion
+**Impact:** Unclear feature completeness
+
+Community and Sharing APIs exist but documentation is sparse.
 
 **Action Items:**
-- [ ] Define `ApiResponse<T>` envelope type
-- [ ] Standardize success/error response format
-- [ ] Add response middleware
-
----
-
-## Dependency Updates
-
-| Package | Current | Latest | Priority |
-|---------|---------|--------|----------|
-| typescript | ^5.3.3 | 5.4.x | Low |
-| eslint | ^8.56.0 | 9.x | Low |
-| express | ^4.18.2 | 4.21.x | Low |
-| react | ^18.2.0 | 18.3.x | Low |
-
-**Action Items:**
-- [ ] Run `npm outdated` monthly
-- [ ] Update patch versions immediately
-- [ ] Plan minor/major updates quarterly
-
----
-
-## Missing Dependencies
-
-| Package | Purpose | Priority |
-|---------|---------|----------|
-| `zod` | Runtime validation | High |
-| `pino` | Structured logging | Medium |
-| `helmet` | Security headers | Low |
-| `express-rate-limit` | Rate limiting | Low |
+- [ ] Document Community API usage and limitations
+- [ ] Document Sharing API usage
+- [ ] Add rate limiting for GitHub API calls
+- [ ] Or mark features as experimental in docs
 
 ---
 
 ## Architecture Improvements
 
 ### Shared Types Package
-Create `packages/shared` with:
+Consider creating `packages/shared` with:
 - API request/response types
 - Job status enums
 - Preview target definitions
 - Test options types
 
 ### Repository Pattern
-Implement for:
-- Profile storage
-- Job metadata storage
-- Artifact management
+Status:
+- ✅ Profile storage (`ProfileStore`)
+- ✅ Job metadata (`JobRepository`)
+- ✅ Artifact management (`ArtifactManager`)
 
 ### Event-Driven Architecture
-Consider:
+Consider for future:
 - Job queue (Bull/BullMQ) for background processing
 - Concurrent job limits
 - Retry logic with exponential backoff
@@ -291,39 +264,57 @@ Consider:
 
 ## Testing Strategy
 
-### Unit Tests (Priority 1)
-- Pure functions: `yaml.ts`, `hash.ts`
-- Business logic: `resolveTargets.ts`, `configGenerator.ts`
-- Plex client (with mocked HTTP)
+### Unit Tests (Implemented)
+- ✅ Pure functions: `yaml.ts`, `hash.ts`
+- ✅ Business logic: `resolveTargets.ts`, `configGenerator.ts`
+- [ ] Plex client (with mocked HTTP)
 
 ### Integration Tests (Priority 2)
-- API endpoint contracts
-- Job lifecycle
-- SSE event streaming
+- [ ] API endpoint contracts
+- [ ] Job lifecycle
+- [ ] SSE event streaming
 
 ### E2E Tests (Priority 3)
-- Full preview workflow
-- Error scenarios
-- Browser compatibility
+- [ ] Full preview workflow
+- [ ] Error scenarios
+- [ ] Browser compatibility
 
 ---
 
-## Quick Wins (< 30 min each)
+## Dependencies Status
 
-1. [ ] Add environment variable validation on startup
-2. [ ] Extract magic numbers to constants
-3. [ ] Add TypeScript strict null checks
-4. [ ] Create ErrorBoundary component
-5. [ ] Add request logging middleware
-6. [ ] Fix status enum mismatch
+### Added
+| Package | Purpose | Status |
+|---------|---------|--------|
+| `zod` | Runtime validation | ✅ Installed |
+| `jest` | Backend testing | ✅ Installed |
+| `vitest` | Frontend testing | ✅ Installed |
+| `pino` | Structured logging | ✅ Installed |
+| `pino-pretty` | Dev log formatting | ✅ Installed |
+
+### Still Needed
+| Package | Purpose | Priority |
+|---------|---------|----------|
+| `helmet` | Security headers | Low |
+| `express-rate-limit` | Rate limiting | Low |
+
+---
+
+## Quick Wins Remaining
+
+1. [ ] Add request logging middleware
+2. [ ] Verify error boundary coverage
+3. [ ] Add profile expiry to API response
+4. [ ] Document Community/Sharing API status
+5. [ ] Add environment variable validation on startup
 
 ---
 
 ## Definition of Done for Technical Debt
 
-- [ ] Issue is documented in this file
-- [ ] Fix is implemented and tested
-- [ ] Existing tests pass
-- [ ] New tests added for the fix
+- [x] Issue is documented in this file
+- [x] Fix is implemented and tested
+- [x] Existing tests pass
+- [x] New tests added for the fix
 - [ ] Code reviewed by another developer
-- [ ] Documentation updated if needed
+- [x] Documentation updated if needed

@@ -64,17 +64,39 @@ try {
 # ============================================================
 Write-Info "Checking docker-compose availability..."
 
-try {
-    $composeVersion = docker-compose version 2>&1
-    if ($LASTEXITCODE -ne 0) {
-        throw "docker-compose returned non-zero exit code"
+$script:ComposeCmd = $null
+
+# Try docker compose (v2) first - this is the modern integrated version
+$null = docker compose version 2>&1
+if ($LASTEXITCODE -eq 0) {
+    $script:ComposeCmd = "docker compose"
+    Write-Success "Docker Compose v2 is available (docker compose)"
+} else {
+    # Fall back to docker-compose (v1) - standalone version
+    $null = docker-compose version 2>&1
+    if ($LASTEXITCODE -eq 0) {
+        $script:ComposeCmd = "docker-compose"
+        Write-Success "Docker Compose v1 is available (docker-compose)"
     }
-    Write-Success "docker-compose is available"
-} catch {
+}
+
+if (-not $script:ComposeCmd) {
     Write-Err "docker-compose is not available."
     Write-Err "Docker Desktop typically includes docker-compose."
     Write-Err "Please ensure Docker Desktop is properly installed."
     exit 1
+}
+
+# Helper function to run compose commands
+function Invoke-Compose {
+    param([string]$Arguments)
+    if ($script:ComposeCmd -eq "docker compose") {
+        $cmd = "docker compose $Arguments"
+    } else {
+        $cmd = "docker-compose $Arguments"
+    }
+    Invoke-Expression $cmd
+    return $LASTEXITCODE
 }
 
 # ============================================================
@@ -209,7 +231,7 @@ Write-Info "Building Docker images (this may take a few minutes on first run)...
 # Build renderer with fresh layers to ensure latest code is always used
 # This is critical for preview accuracy - stale renderer code = wrong overlays
 Write-Info "Building renderer image (forcing fresh build to ensure latest code)..."
-docker-compose build --no-cache --pull kometa-renderer-build
+$null = Invoke-Compose "build --no-cache --pull kometa-renderer-build"
 if ($LASTEXITCODE -ne 0) {
     Write-Err "Renderer image build failed"
     exit 1
@@ -218,7 +240,7 @@ Write-Success "Renderer image built successfully"
 
 # Build other services (can use cache since they change less frequently)
 Write-Info "Building backend and frontend services..."
-docker-compose build backend frontend
+$null = Invoke-Compose "build backend frontend"
 if ($LASTEXITCODE -ne 0) {
     Write-Err "Backend/frontend build failed"
     exit 1
@@ -227,7 +249,7 @@ Write-Success "All Docker images built successfully"
 
 Write-Info "Starting services..."
 
-docker-compose up -d
+$null = Invoke-Compose "up -d"
 if ($LASTEXITCODE -ne 0) {
     Write-Err "docker-compose up failed"
     exit 1
@@ -235,7 +257,7 @@ if ($LASTEXITCODE -ne 0) {
 Write-Success "Services started"
 
 Write-Info "Container status:"
-docker-compose ps
+Invoke-Compose "ps"
 
 # ============================================================
 # Step 7: Open UI in default browser

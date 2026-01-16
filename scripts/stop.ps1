@@ -34,10 +34,38 @@ $RepoRoot = Split-Path -Parent $ScriptDir
 Write-Info "Changing to repository root: $RepoRoot"
 Set-Location $RepoRoot
 
+# Detect compose command (v2 or v1)
+$script:ComposeCmd = $null
+
+$null = docker compose version 2>&1
+if ($LASTEXITCODE -eq 0) {
+    $script:ComposeCmd = "docker compose"
+} else {
+    $null = docker-compose version 2>&1
+    if ($LASTEXITCODE -eq 0) {
+        $script:ComposeCmd = "docker-compose"
+    }
+}
+
+if (-not $script:ComposeCmd) {
+    Write-Err "docker-compose is not available."
+    exit 1
+}
+
+function Invoke-Compose {
+    param([string]$Arguments)
+    if ($script:ComposeCmd -eq "docker compose") {
+        Invoke-Expression "docker compose $Arguments"
+    } else {
+        Invoke-Expression "docker-compose $Arguments"
+    }
+    return $LASTEXITCODE
+}
+
 # Stop containers
 Write-Info "Stopping Kometa Preview Studio..."
 
-docker-compose down
+$null = Invoke-Compose "down"
 if ($LASTEXITCODE -ne 0) {
     Write-Err "docker-compose down failed"
     exit 1

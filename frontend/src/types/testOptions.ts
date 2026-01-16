@@ -83,6 +83,14 @@ export interface TestOptions {
    * When enabled, applies overlays directly without external API calls.
    */
   manualBuilderConfig?: ManualBuilderConfig;
+
+  /**
+   * Use full Kometa builder mode (slower but more accurate).
+   * When true, runs Kometa's full overlay builder pipeline including
+   * external API calls, library scanning, and multi-level overlays.
+   * When false (default), uses fast instant compositor for preview targets only.
+   */
+  useFullKometaBuilder?: boolean;
 }
 
 /**

@@ -27,6 +27,21 @@ export interface PlexClientConfig {
   timeout?: number;
 }
 
+// Internal interface for Plex list response
+interface PlexListResponse {
+  MediaContainer: {
+    Metadata?: Array<{
+      ratingKey: string;
+      key: string;
+      type: string;
+      title: string;
+      year?: number;
+      thumb?: string;
+      art?: string;
+    }>;
+  };
+}
+
 /**
  * Plex API client for fetching metadata and artwork
  */
@@ -108,73 +123,97 @@ export class PlexClient {
   }
 
   /**
-   * Search for movies by title and optional year
-   * Uses section-based listing with title filtering for reliability
+   * Generic search by media type
+   * Searches library sections matching the specified type
+   *
+   * @param sectionType - The library section type ('movie' or 'show')
+   * @param itemType - The item type to match in results
+   * @param title - The title to search for
+   * @returns Array of matching media items
    */
-  async searchMovies(title: string, year?: number): Promise<PlexMediaItem[]> {
-    interface PlexListResponse {
-      MediaContainer: {
-        Metadata?: Array<{
-          ratingKey: string;
-          key: string;
-          type: string;
-          title: string;
-          year?: number;
-          thumb?: string;
-          art?: string;
-        }>;
-      };
-    }
-
-    // Get movie sections
+  private async searchByType(
+    sectionType: 'movie' | 'show',
+    itemType: 'movie' | 'show',
+    title: string
+  ): Promise<PlexMediaItem[]> {
+    // Get sections matching the type
     const sections = await this.getLibrarySections();
-    const movieSections = sections.filter(s => s.type === 'movie');
+    const matchingSections = sections.filter(s => s.type === sectionType);
 
     const allItems: PlexMediaItem[] = [];
     const titleLower = title.toLowerCase();
 
-    for (const section of movieSections) {
-      // Use section-specific search or list all and filter
-      // Try section search first
-      try {
-        const searchPath = `/library/sections/${section.key}/all?title=${encodeURIComponent(title)}`;
-        const response = await this.request<PlexListResponse>(searchPath);
-        const metadata = response.MediaContainer?.Metadata || [];
+    for (const section of matchingSections) {
+      const items = await this.searchInSection(section.key, itemType, titleLower, title);
+      allItems.push(...items);
+    }
 
-        for (const m of metadata) {
-          if (m.type === 'movie' && m.title.toLowerCase().includes(titleLower)) {
-            allItems.push({
-              ratingKey: m.ratingKey,
-              key: m.key,
-              type: 'movie' as const,
-              title: m.title,
-              year: m.year,
-              thumb: m.thumb,
-              art: m.art,
-            });
-          }
+    return allItems;
+  }
+
+  /**
+   * Search within a specific library section
+   * Tries title-filtered search first, falls back to listing all items
+   */
+  private async searchInSection(
+    sectionKey: string,
+    itemType: 'movie' | 'show',
+    titleLower: string,
+    originalTitle: string
+  ): Promise<PlexMediaItem[]> {
+    const items: PlexMediaItem[] = [];
+
+    try {
+      // Try section-specific title search first
+      const searchPath = `/library/sections/${sectionKey}/all?title=${encodeURIComponent(originalTitle)}`;
+      const response = await this.request<PlexListResponse>(searchPath);
+      const metadata = response.MediaContainer?.Metadata || [];
+
+      for (const m of metadata) {
+        if (m.type === itemType && m.title.toLowerCase().includes(titleLower)) {
+          items.push(this.mapToMediaItem(m, itemType));
         }
-      } catch {
-        // If section search fails, try listing all (for smaller libraries)
-        const listPath = `/library/sections/${section.key}/all`;
-        const response = await this.request<PlexListResponse>(listPath);
-        const metadata = response.MediaContainer?.Metadata || [];
+      }
+    } catch {
+      // If section search fails, try listing all (for smaller libraries)
+      const listPath = `/library/sections/${sectionKey}/all`;
+      const response = await this.request<PlexListResponse>(listPath);
+      const metadata = response.MediaContainer?.Metadata || [];
 
-        for (const m of metadata) {
-          if (m.type === 'movie' && m.title.toLowerCase().includes(titleLower)) {
-            allItems.push({
-              ratingKey: m.ratingKey,
-              key: m.key,
-              type: 'movie' as const,
-              title: m.title,
-              year: m.year,
-              thumb: m.thumb,
-              art: m.art,
-            });
-          }
+      for (const m of metadata) {
+        if (m.type === itemType && m.title.toLowerCase().includes(titleLower)) {
+          items.push(this.mapToMediaItem(m, itemType));
         }
       }
     }
+
+    return items;
+  }
+
+  /**
+   * Map Plex API response to PlexMediaItem
+   */
+  private mapToMediaItem(
+    m: NonNullable<PlexListResponse['MediaContainer']['Metadata']>[number],
+    type: 'movie' | 'show'
+  ): PlexMediaItem {
+    return {
+      ratingKey: m.ratingKey,
+      key: m.key,
+      type,
+      title: m.title,
+      year: m.year,
+      thumb: m.thumb,
+      art: m.art,
+    };
+  }
+
+  /**
+   * Search for movies by title and optional year
+   * Uses section-based listing with title filtering for reliability
+   */
+  async searchMovies(title: string, year?: number): Promise<PlexMediaItem[]> {
+    const allItems = await this.searchByType('movie', 'movie', title);
 
     // Filter by year if provided
     if (year) {
@@ -192,70 +231,7 @@ export class PlexClient {
    * Uses section-based listing with title filtering for reliability
    */
   async searchShows(title: string): Promise<PlexMediaItem[]> {
-    interface PlexListResponse {
-      MediaContainer: {
-        Metadata?: Array<{
-          ratingKey: string;
-          key: string;
-          type: string;
-          title: string;
-          year?: number;
-          thumb?: string;
-          art?: string;
-        }>;
-      };
-    }
-
-    // Get show sections
-    const sections = await this.getLibrarySections();
-    const showSections = sections.filter(s => s.type === 'show');
-
-    const allItems: PlexMediaItem[] = [];
-    const titleLower = title.toLowerCase();
-
-    for (const section of showSections) {
-      // Use section-specific search or list all and filter
-      try {
-        const searchPath = `/library/sections/${section.key}/all?title=${encodeURIComponent(title)}`;
-        const response = await this.request<PlexListResponse>(searchPath);
-        const metadata = response.MediaContainer?.Metadata || [];
-
-        for (const m of metadata) {
-          if (m.type === 'show' && m.title.toLowerCase().includes(titleLower)) {
-            allItems.push({
-              ratingKey: m.ratingKey,
-              key: m.key,
-              type: 'show' as const,
-              title: m.title,
-              year: m.year,
-              thumb: m.thumb,
-              art: m.art,
-            });
-          }
-        }
-      } catch {
-        // If section search fails, try listing all
-        const listPath = `/library/sections/${section.key}/all`;
-        const response = await this.request<PlexListResponse>(listPath);
-        const metadata = response.MediaContainer?.Metadata || [];
-
-        for (const m of metadata) {
-          if (m.type === 'show' && m.title.toLowerCase().includes(titleLower)) {
-            allItems.push({
-              ratingKey: m.ratingKey,
-              key: m.key,
-              type: 'show' as const,
-              title: m.title,
-              year: m.year,
-              thumb: m.thumb,
-              art: m.art,
-            });
-          }
-        }
-      }
-    }
-
-    return allItems;
+    return this.searchByType('show', 'show', title);
   }
 
   /**
