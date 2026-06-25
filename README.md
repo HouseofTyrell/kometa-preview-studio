@@ -1,5 +1,6 @@
 # Kometa Preview Studio
 
+![Status: Beta](https://img.shields.io/badge/status-beta-yellow) ![License: MIT](https://img.shields.io/badge/license-MIT-green)
 A local-only web application for previewing Kometa overlays exactly as Kometa would render them, without modifying your Plex metadata or artwork.
 
 ## Features
@@ -38,7 +39,7 @@ The current version previews 5 static items:
 
 1. **Clone the repository**
    ```bash
-   git clone <repo-url>
+   git clone https://github.com/HouseofTyrell/kometa-preview-studio.git
    cd kometa-preview-studio
    ```
 
